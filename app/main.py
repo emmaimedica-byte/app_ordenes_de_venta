@@ -8,15 +8,14 @@ from app.database import create_db_and_tables, engine
 from app.models.orden import OrdenVenta, EstadoOrden, HistorialOrden
 
 # ----------------------------------------------------
-# 1. CONTROL DE ESTADO GLOBAL PARA TIEMPO REAL OPTIMIZADO
+# 1. CONTROL DE ESTADO GLOBAL PARA TIEMPO REAL
 # ----------------------------------------------------
 estado_global = {
     "ultima_actualizacion": datetime.now(),
-    "ultima_ov_movida": None  # Para resaltar con animación la última OV que cambió
+    "ultima_ov_movida": None
 }
 
 def notificar_cambio_global(orden_id: int = None):
-    """Llamar a esta función cada vez que se cree o mueva una OV."""
     estado_global["ultima_actualizacion"] = datetime.now()
     estado_global["ultima_ov_movida"] = orden_id
 
@@ -42,18 +41,6 @@ def registrar_historial(session: Session, orden_id: int, estado_nuevo: str, esta
         observaciones=obs
     )
     session.add(historial_entry)
-
-def calcular_tiempo_permanencia(fecha_actualizacion: datetime) -> tuple[str, str, str]:
-    diferencia = datetime.now() - fecha_actualizacion
-    horas = diferencia.total_seconds() / 3600
-
-    if horas < 4:
-        return f"⏱️ {int(horas * 60)} min", "bg-green-100 text-green-800", "border-green-300"
-    elif horas < 24:
-        return f"⏳ {int(horas)} hrs", "bg-amber-100 text-amber-800", "border-amber-400"
-    else:
-        dias = int(horas / 24)
-        return f"🚨 {dias} día(s)", "bg-red-100 text-red-800 font-bold", "border-red-500"
 
 # ----------------------------------------------------
 # 4. CONFIGURACIÓN DEL FLUJO DE TRABAJO
@@ -83,7 +70,7 @@ ESTADOS_CONFIG = [
 def main_page():
     ui.colors(primary='#1E3A8A', secondary='#3B82F6', accent='#10B981')
 
-    # Estilos CSS personalizados para animaciones adicionales
+    # CSS + JavaScript para actualizar los temporizadores automáticamente cada 10 segundos
     ui.add_head_html('''
         <style>
             @keyframes resaltarEntrada {
@@ -102,6 +89,45 @@ def main_page():
                 box-shadow: 0 4px 12px rgba(0,0,0,0.1);
             }
         </style>
+
+        <script>
+            // Función ejecutada en el cliente que actualiza los temporizadores vivos
+            function actualizarTemporizadores() {
+                const elementos = document.querySelectorAll('.badge-tiempo[data-iso]');
+                const ahora = new Date();
+
+                elementos.forEach(el => {
+                    const isoFecha = el.getAttribute('data-iso');
+                    if (!isoFecha) return;
+
+                    const fechaOrden = new Date(isoFecha);
+                    const diffMs = ahora - fechaOrden;
+                    const diffHoras = diffMs / (1000 * 60 * 60);
+
+                    // Limpieza de clases de color anteriores
+                    el.className = 'badge-tiempo text-xs px-2 py-0.5 rounded-full transition-colors duration-300 ';
+
+                    if (diffHoras < 4) {
+                        const mins = Math.max(0, Math.floor(diffMs / (1000 * 60)));
+                        el.innerText = `⏱️ ${mins} min`;
+                        el.className += 'bg-green-100 text-green-800 border border-green-300';
+                    } else if (diffHoras < 24) {
+                        const hrs = Math.floor(diffHoras);
+                        el.innerText = `⏳ ${hrs} hrs`;
+                        el.className += 'bg-amber-100 text-amber-800 border border-amber-400';
+                    } else {
+                        const dias = Math.floor(diffHoras / 24);
+                        el.innerText = `🚨 ${dias} día(s)`;
+                        el.className += 'bg-red-100 text-red-800 font-bold border border-red-500';
+                    }
+                });
+            }
+
+            // Ejecutar cada 10 segundos en el navegador
+            setInterval(actualizarTemporizadores, 10000);
+            // Ejecutar una vez al cargar
+            document.addEventListener("DOMContentLoaded", actualizarTemporizadores);
+        </script>
     ''')
 
     filtro_texto = {'val': ''}
@@ -123,7 +149,7 @@ def main_page():
     with ui.tab_panels(tabs, value=tab_kanban).classes('w-full bg-slate-50 p-2'):
         
         # ====================================================
-        # PESTAÑA 1: TABLERO GENERAL (CON ANIMACIONES)
+        # PESTAÑA 1: TABLERO GENERAL
         # ====================================================
         with ui.tab_panel(tab_kanban):
             
@@ -132,12 +158,14 @@ def main_page():
                 with contenedor_tablero:
                     render_columnas()
                 version_cliente['ultima_vista'] = estado_global['ultima_actualizacion']
+                # Disparar actualización de temporizadores justo después de refrescar HTML
+                ui.run_javascript('actualizarTemporizadores();')
 
             def verificar_cambios_y_refrescar():
                 if version_cliente['ultima_vista'] != estado_global['ultima_actualizacion']:
                     refrescar_tablero()
 
-            # Timer de verificación
+            # Timer de verificación del lado del servidor (para sincronizar cambios de otros usuarios)
             ui.timer(2.0, verificar_cambios_y_refrescar)
 
             def cambiar_estado_orden(orden_id: int, mover_adelante: bool = True):
@@ -224,7 +252,7 @@ def main_page():
                         ui.button('Cerrar', on_click=dialog.close).classes('mt-4 self-end bg-gray-500 text-white')
                     dialog.open()
 
-            # Panel Superior de Búsqueda y Creación
+            # Panel Superior
             with ui.row().classes('w-full mb-4 gap-4 items-center justify-between bg-white p-4 rounded-lg border shadow-xs'):
                 with ui.row().classes('items-center gap-2 flex-1 max-w-md'):
                     ui.icon('search', size='sm').classes('text-gray-400')
@@ -245,7 +273,7 @@ def main_page():
                     ui.button('Crear OV', icon='add', on_click=lambda: crear_nueva_ov(input_ov.value, input_cliente.value))\
                         .classes('bg-secondary text-white font-bold')
 
-            # Renderizado de Columnas Kanban con Animación de Transición
+            # Renderizado de Columnas Kanban
             def render_columnas():
                 with Session(engine) as session:
                     todas_ordenes = session.exec(select(OrdenVenta)).all()
@@ -272,17 +300,19 @@ def main_page():
                                 ui.label('Sin órdenes').classes('text-xs text-gray-400 italic py-4 text-center w-full')
                             else:
                                 for orden in ordenes_etapa:
-                                    txt_tiempo, color_badge, color_borde = calcular_tiempo_permanencia(orden.actualizado_en)
-                                    
-                                    # Si es la última OV movida, le agregamos animación de entrada y un borde especial
                                     es_recien_movida = (orden.id == estado_global["ultima_ov_movida"])
                                     clase_animacion = "animacion-entrada ring-2 ring-blue-400" if es_recien_movida else ""
 
-                                    with ui.card().classes(f'tarjeta-ov w-full p-3 mb-2 bg-white rounded border-l-4 {color_borde} {clase_animacion}'):
+                                    iso_fecha = orden.actualizado_en.isoformat()
+
+                                    with ui.card().classes(f'tarjeta-ov w-full p-3 mb-2 bg-white rounded border shadow-xs {clase_animacion}'):
                                         with ui.row().classes('justify-between items-center w-full'):
                                             ui.label(orden.numero_ov).classes('font-bold text-blue-900 text-base')
-                                            ui.label(txt_tiempo).classes(f'text-xs px-2 py-0.5 rounded-full {color_badge}')
                                             
+                                            # Elementificación dinámica del badge del temporizador
+                                            badge_timer = ui.label('calculando...').classes('badge-tiempo text-xs px-2 py-0.5 rounded-full')
+                                            badge_timer.props(f'data-iso="{iso_fecha}"')
+
                                             ui.button(icon='visibility', on_click=lambda o_id=orden.id: ver_historial_modal(o_id))\
                                                 .props('flat round dense color=grey-7').tooltip('Ver historial')
 
@@ -374,7 +404,6 @@ def main_page():
                                 ui.label(f'De: {estado_previo} ➔ A: {estado_destino}').classes('text-xs font-semibold text-green-800 mt-1')
                                 ui.notify(f'🚀 OV {codigo} movida a {estado_destino}', type='positive')
 
-                                # Notificamos el cambio global para activar la animación en el tablero
                                 notificar_cambio_global(orden.id)
 
                     input_escaneo.value = ''

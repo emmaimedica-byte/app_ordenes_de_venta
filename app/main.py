@@ -70,7 +70,7 @@ ESTADOS_CONFIG = [
 def main_page():
     ui.colors(primary='#1E3A8A', secondary='#3B82F6', accent='#10B981')
 
-    # CSS + JavaScript para actualizar los temporizadores automáticamente cada 10 segundos
+    # CSS + JavaScript para actualizar los temporizadores automáticamente
     ui.add_head_html('''
         <style>
             @keyframes resaltarEntrada {
@@ -91,7 +91,6 @@ def main_page():
         </style>
 
         <script>
-            // Función ejecutada en el cliente que actualiza los temporizadores vivos
             function actualizarTemporizadores() {
                 const elementos = document.querySelectorAll('.badge-tiempo[data-iso]');
                 const ahora = new Date();
@@ -104,7 +103,6 @@ def main_page():
                     const diffMs = ahora - fechaOrden;
                     const diffHoras = diffMs / (1000 * 60 * 60);
 
-                    // Limpieza de clases de color anteriores
                     el.className = 'badge-tiempo text-xs px-2 py-0.5 rounded-full transition-colors duration-300 ';
 
                     if (diffHoras < 4) {
@@ -123,15 +121,14 @@ def main_page():
                 });
             }
 
-            // Ejecutar cada 10 segundos en el navegador
             setInterval(actualizarTemporizadores, 10000);
-            // Ejecutar una vez al cargar
             document.addEventListener("DOMContentLoaded", actualizarTemporizadores);
         </script>
     ''')
 
     filtro_texto = {'val': ''}
-    version_cliente = {'ultima_vista': None}
+    version_cliente_tablero = {'ultima_vista': None}
+    version_cliente_metrics = {'ultima_vista': None}
 
     # Encabezado principal
     with ui.header().classes('items-center justify-between bg-primary text-white p-3 shadow-md'):
@@ -157,16 +154,14 @@ def main_page():
                 contenedor_tablero.clear()
                 with contenedor_tablero:
                     render_columnas()
-                version_cliente['ultima_vista'] = estado_global['ultima_actualizacion']
-                # Disparar actualización de temporizadores justo después de refrescar HTML
+                version_cliente_tablero['ultima_vista'] = estado_global['ultima_actualizacion']
                 ui.run_javascript('actualizarTemporizadores();')
 
-            def verificar_cambios_y_refrescar():
-                if version_cliente['ultima_vista'] != estado_global['ultima_actualizacion']:
+            def verificar_cambios_tablero():
+                if version_cliente_tablero['ultima_vista'] != estado_global['ultima_actualizacion']:
                     refrescar_tablero()
 
-            # Timer de verificación del lado del servidor (para sincronizar cambios de otros usuarios)
-            ui.timer(2.0, verificar_cambios_y_refrescar)
+            ui.timer(2.0, verificar_cambios_tablero)
 
             def cambiar_estado_orden(orden_id: int, mover_adelante: bool = True):
                 with Session(engine) as session:
@@ -197,7 +192,10 @@ def main_page():
                         notificar_cambio_global(orden.id)
                         refrescar_tablero()
 
-            def crear_nueva_ov(num_ov: str, cliente_nombre: str):
+            def crear_nueva_ov():
+                num_ov = input_ov.value or ''
+                cliente_nombre = input_cliente.value or ''
+
                 if not num_ov.strip():
                     ui.notify('Ingresa un número de OV válido', type='warning')
                     return
@@ -215,11 +213,14 @@ def main_page():
                     
                     registrar_historial(session, nueva.id, nueva.estado.value, None, "Admin / Recepción", "Alta de Orden")
                     session.commit()
-                    
+                    id_creada = nueva.id
+
                 ui.notify(f'✨ OV {num_ov} registrada con éxito', type='positive')
+                
                 input_ov.value = ''
                 input_cliente.value = ''
-                notificar_cambio_global(nueva.id)
+                
+                notificar_cambio_global(id_creada)
                 refrescar_tablero()
 
             def ver_historial_modal(orden_id: int):
@@ -270,7 +271,7 @@ def main_page():
                 with ui.row().classes('items-center gap-2 flex-1 justify-end'):
                     input_ov = ui.input(placeholder='Ej: OV-1001').classes('w-32').props('dense outlined')
                     input_cliente = ui.input(placeholder='Cliente').classes('w-44').props('dense outlined')
-                    ui.button('Crear OV', icon='add', on_click=lambda: crear_nueva_ov(input_ov.value, input_cliente.value))\
+                    ui.button('Crear OV', icon='add', on_click=crear_nueva_ov)\
                         .classes('bg-secondary text-white font-bold')
 
             # Renderizado de Columnas Kanban
@@ -302,14 +303,12 @@ def main_page():
                                 for orden in ordenes_etapa:
                                     es_recien_movida = (orden.id == estado_global["ultima_ov_movida"])
                                     clase_animacion = "animacion-entrada ring-2 ring-blue-400" if es_recien_movida else ""
-
                                     iso_fecha = orden.actualizado_en.isoformat()
 
                                     with ui.card().classes(f'tarjeta-ov w-full p-3 mb-2 bg-white rounded border shadow-xs {clase_animacion}'):
                                         with ui.row().classes('justify-between items-center w-full'):
                                             ui.label(orden.numero_ov).classes('font-bold text-blue-900 text-base')
                                             
-                                            # Elementificación dinámica del badge del temporizador
                                             badge_timer = ui.label('calculando...').classes('badge-tiempo text-xs px-2 py-0.5 rounded-full')
                                             badge_timer.props(f'data-iso="{iso_fecha}"')
 
@@ -415,9 +414,10 @@ def main_page():
                     .classes('w-full bg-green-600 text-white font-bold py-3 text-lg shadow-md hover:scale-105 transition-transform')
 
         # ====================================================
-        # PESTAÑA 3: DASHBOARD DE MÉTRICAS Y KPIS
+        # PESTAÑA 3: DASHBOARD DE MÉTRICAS Y KPIS (TIEMPO REAL AUTO)
         # ====================================================
         with ui.tab_panel(tab_metrics):
+            
             def render_dashboard():
                 contenedor_metrics.clear()
                 with Session(engine) as session:
@@ -430,7 +430,9 @@ def main_page():
                 alertas = len([o for o in ordenes if o.estado != EstadoOrden.ADMINISTRACION_COMPLETADO and (datetime.now() - o.actualizado_en).total_seconds() > 86400])
 
                 with contenedor_metrics:
-                    ui.label('📈 Indicadores Clave de Operación (KPIs)').classes('text-xl font-bold text-blue-900 mb-4')
+                    with ui.row().classes('w-full justify-between items-center mb-4'):
+                        ui.label('📈 Indicadores Clave de Operación (KPIs)').classes('text-xl font-bold text-blue-900')
+                        ui.label('🟢 En Vivo').classes('text-xs bg-green-100 text-green-800 font-bold px-2.5 py-1 rounded-full border border-green-300')
                     
                     with ui.row().classes('w-full gap-4 mb-6'):
                         with ui.card().classes('flex-1 p-4 bg-blue-50 border-l-4 border-blue-600 shadow-xs hover:scale-105 transition-transform'):
@@ -463,7 +465,15 @@ def main_page():
                     ui.echart(echart_config).classes('w-full h-80 bg-white p-4 rounded-lg border shadow-xs')
 
                     ui.button('Actualizar Métricas', icon='refresh', on_click=render_dashboard)\
-                        .classes('mt-4 bg-primary text-white font-bold')
+                        .classes('mt-4 bg-primary text-white font-bold hover:scale-105 transition-transform')
+
+                version_cliente_metrics['ultima_vista'] = estado_global['ultima_actualizacion']
+
+            def verificar_cambios_metrics():
+                if version_cliente_metrics['ultima_vista'] != estado_global['ultima_actualizacion']:
+                    render_dashboard()
+
+            ui.timer(3.0, verificar_cambios_metrics)
 
             contenedor_metrics = ui.column().classes('w-full')
             render_dashboard()

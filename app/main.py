@@ -223,6 +223,95 @@ def main_page():
                 notificar_cambio_global(id_creada)
                 refrescar_tablero()
 
+            # MODAL: EDITAR INFORMACIÓN DE OV
+            def ver_editar_modal(orden_id: int):
+                with Session(engine) as session:
+                    orden = session.get(OrdenVenta, orden_id)
+                    if not orden:
+                        return
+
+                    with ui.dialog() as dialog, ui.card().classes('w-full max-w-md p-6 animacion-entrada'):
+                        ui.label(f'✏️ Editar OV {orden.numero_ov}').classes('text-lg font-bold text-blue-900 mb-2')
+                        
+                        edit_ov = ui.input('Número de OV', value=orden.numero_ov).classes('w-full').props('outlined dense')
+                        edit_cliente = ui.input('Nombre del Cliente', value=orden.cliente).classes('w-full mt-2').props('outlined dense')
+                        
+                        def guardar_cambios():
+                            nuevo_num = edit_ov.value.strip()
+                            nuevo_cli = edit_cliente.value.strip()
+
+                            if not nuevo_num:
+                                ui.notify('El número de OV no puede estar vacío', type='warning')
+                                return
+
+                            with Session(engine) as s:
+                                o = s.get(OrdenVenta, orden_id)
+                                if o:
+                                    # Verificar duplico si se cambia el código
+                                    if nuevo_num != o.numero_ov:
+                                        duplicado = s.exec(select(OrdenVenta).where(OrdenVenta.numero_ov == nuevo_num)).first()
+                                        if duplicado:
+                                            ui.notify('Ese número de OV ya pertenece a otra orden', type='negative')
+                                            return
+                                    
+                                    o.numero_ov = nuevo_num
+                                    o.cliente = nuevo_cli or "Cliente General"
+                                    o.actualizado_en = datetime.now()
+                                    
+                                    registrar_historial(s, o.id, o.estado.value, None, "Admin", f"Edición de datos: OV={nuevo_num}, Cliente={nuevo_cli}")
+                                    s.add(o)
+                                    s.commit()
+
+                            ui.notify('✅ Orden actualizada correctamente', type='positive')
+                            dialog.close()
+                            notificar_cambio_global(orden_id)
+                            refrescar_tablero()
+
+                        with ui.row().classes('w-full justify-end gap-2 mt-4'):
+                            ui.button('Cancelar', on_click=dialog.close).classes('bg-gray-400 text-white')
+                            ui.button('Guardar', icon='save', on_click=guardar_cambios).classes('bg-primary text-white font-bold')
+
+                    dialog.open()
+
+            # MODAL: AGREGAR COMENTARIO
+            def ver_comentario_modal(orden_id: int):
+                with Session(engine) as session:
+                    orden = session.get(OrdenVenta, orden_id)
+                    if not orden:
+                        return
+
+                    with ui.dialog() as dialog, ui.card().classes('w-full max-w-md p-6 animacion-entrada'):
+                        ui.label(f'💬 Agregar Comentario a {orden.numero_ov}').classes('text-lg font-bold text-blue-900 mb-1')
+                        ui.label(f'Etapa Actual: {orden.estado.value}').classes('text-xs text-gray-500 mb-2')
+                        
+                        input_operador = ui.input('Tu Nombre / Usuario', value='Operador').classes('w-full').props('outlined dense')
+                        input_comentario = ui.textarea('Escribe tu comentario u observación...').classes('w-full mt-2').props('outlined dense')
+                        
+                        def guardar_comentario():
+                            coment = input_comentario.value.strip()
+                            oper = input_operador.value.strip() or "Operador"
+
+                            if not coment:
+                                ui.notify('Escribe un comentario antes de guardar', type='warning')
+                                return
+
+                            with Session(engine) as s:
+                                o = s.get(OrdenVenta, orden_id)
+                                if o:
+                                    registrar_historial(s, o.id, o.estado.value, None, oper, f"Comentario: {coment}")
+                                    s.commit()
+
+                            ui.notify('💬 Comentario añadido al historial', type='positive')
+                            dialog.close()
+                            notificar_cambio_global(orden_id)
+
+                        with ui.row().classes('w-full justify-end gap-2 mt-4'):
+                            ui.button('Cancelar', on_click=dialog.close).classes('bg-gray-400 text-white')
+                            ui.button('Agregar', icon='send', on_click=guardar_comentario).classes('bg-secondary text-white font-bold')
+
+                    dialog.open()
+
+            # MODAL: VER HISTORIAL COMPLETO
             def ver_historial_modal(orden_id: int):
                 with Session(engine) as session:
                     orden = session.get(OrdenVenta, orden_id)
@@ -312,8 +401,14 @@ def main_page():
                                             badge_timer = ui.label('calculando...').classes('badge-tiempo text-xs px-2 py-0.5 rounded-full')
                                             badge_timer.props(f'data-iso="{iso_fecha}"')
 
-                                            ui.button(icon='visibility', on_click=lambda o_id=orden.id: ver_historial_modal(o_id))\
-                                                .props('flat round dense color=grey-7').tooltip('Ver historial')
+                                            # TRES OPCIONES DE ACCIÓN: VER, COMENTAR, EDITAR
+                                            with ui.row().classes('gap-0 items-center'):
+                                                ui.button(icon='visibility', on_click=lambda o_id=orden.id: ver_historial_modal(o_id))\
+                                                    .props('flat round dense color=grey-7').tooltip('Ver historial')
+                                                ui.button(icon='chat_bubble_outline', on_click=lambda o_id=orden.id: ver_comentario_modal(o_id))\
+                                                    .props('flat round dense color=blue-6').tooltip('Agregar comentario')
+                                                ui.button(icon='edit', on_click=lambda o_id=orden.id: ver_editar_modal(o_id))\
+                                                    .props('flat round dense color=amber-7').tooltip('Editar orden')
 
                                         ui.label(f'👤 {orden.cliente}').classes('text-xs text-gray-600 mb-2')
                                         

@@ -247,7 +247,6 @@ def main_page():
                             with Session(engine) as s:
                                 o = s.get(OrdenVenta, orden_id)
                                 if o:
-                                    # Verificar duplico si se cambia el código
                                     if nuevo_num != o.numero_ov:
                                         duplicado = s.exec(select(OrdenVenta).where(OrdenVenta.numero_ov == nuevo_num)).first()
                                         if duplicado:
@@ -401,7 +400,6 @@ def main_page():
                                             badge_timer = ui.label('calculando...').classes('badge-tiempo text-xs px-2 py-0.5 rounded-full')
                                             badge_timer.props(f'data-iso="{iso_fecha}"')
 
-                                            # TRES OPCIONES DE ACCIÓN: VER, COMENTAR, EDITAR
                                             with ui.row().classes('gap-0 items-center'):
                                                 ui.button(icon='visibility', on_click=lambda o_id=orden.id: ver_historial_modal(o_id))\
                                                     .props('flat round dense color=grey-7').tooltip('Ver historial')
@@ -430,24 +428,32 @@ def main_page():
         # PESTAÑA 2: MÓDULO PARA HANDHELD / ESCÁNER
         # ====================================================
         with ui.tab_panel(tab_handheld):
-            with ui.column().classes('w-full max-w-md mx-auto items-center p-2 gap-4'):
+            with ui.column().classes('w-full max-w-md mx-auto items-center p-2 gap-3'):
                 
-                ui.label('📱 Módulo de Escaneo Rápido').classes('text-xl font-bold text-blue-900')
-                ui.label('Escanea el código de barras para mover la orden a la etapa seleccionada.')\
-                    .classes('text-xs text-gray-500 text-center')
+                ui.label('📱 Módulo Handheld').classes('text-xl font-bold text-blue-900')
+                ui.label('Escanea una orden para moverla de etapa o registrar observaciones.')\
+                    .classes('text-xs text-gray-500 text-center mb-1')
 
-                opciones_etapas = {e.value: titulo for e, titulo, _, _ in ESTADOS_CONFIG}
+                # Opciones de Etapa + Opción de Solo Comentar
+                opciones_etapas = {"SOLO_COMENTARIO": "💬 Solo agregar comentario (Sin mover)"}
+                opciones_etapas.update({e.value: titulo for e, titulo, _, _ in ESTADOS_CONFIG})
+
                 select_etapa = ui.select(
                     options=opciones_etapas,
                     value=EstadoOrden.ALMACEN_SURTIDO.value,
-                    label='Mover orden hacia la etapa:'
-                ).classes('w-full text-lg')
+                    label='Acción / Etapa destino:'
+                ).classes('w-full text-base')
 
                 input_operador_hh = ui.input(
                     label='Operador / Handheld ID',
                     placeholder='Ej. Operador Handheld #1'
-                ).classes('w-full').props('outlined')
+                ).classes('w-full').props('outlined dense')
                 input_operador_hh.value = "Handheld Almacén"
+
+                input_comentario_hh = ui.textarea(
+                    label='Comentario / Observación (Opcional)',
+                    placeholder='Ej: Caja dañada, faltan 2 piezas, listo para embarque...'
+                ).classes('w-full').props('outlined dense rows=2')
 
                 input_escaneo = ui.input(
                     label='📷 Escanear Código OV',
@@ -461,8 +467,9 @@ def main_page():
                     if not codigo:
                         return
                     
-                    estado_destino = select_etapa.value
+                    accion_seleccionada = select_etapa.value
                     nombre_op = input_operador_hh.value.strip() or "Handheld User"
+                    comentario_txt = input_comentario_hh.value.strip()
 
                     with Session(engine) as session:
                         orden = session.exec(select(OrdenVenta).where(OrdenVenta.numero_ov == codigo)).first()
@@ -476,31 +483,62 @@ def main_page():
                                 ui.notify(f'OV {codigo} no existe', type='negative')
                             else:
                                 estado_previo = orden.estado.value
-                                orden.estado = EstadoOrden(estado_destino)
-                                orden.operador_actual = nombre_op
-                                orden.actualizado_en = datetime.now()
+                                
+                                # CASO 1: SOLO COMENTAR SIN MOVER DE ETAPA
+                                if accion_seleccionada == "SOLO_COMENTARIO":
+                                    obs_final = f"Comentario Handheld: {comentario_txt}" if comentario_txt else "Comentario sin texto"
+                                    
+                                    registrar_historial(
+                                        session,
+                                        orden.id,
+                                        estado_previo,
+                                        None,
+                                        nombre_op,
+                                        obs_final
+                                    )
+                                    session.commit()
 
-                                registrar_historial(
-                                    session,
-                                    orden.id,
-                                    estado_destino,
-                                    estado_previo,
-                                    nombre_op,
-                                    "Escaneo por Handheld"
-                                )
+                                    ui.card().classes('w-full p-4 bg-blue-100 border-l-8 border-blue-500 text-blue-900 shadow animacion-entrada')
+                                    ui.label('💬 ¡COMENTARIO REGISTRADO!').classes('font-bold text-lg')
+                                    ui.label(f'OV: {orden.numero_ov} | Etapa actual: {estado_previo}').classes('text-sm font-semibold')
+                                    if comentario_txt:
+                                        ui.label(f'Nota: "{comentario_txt}"').classes('text-xs italic text-blue-800 mt-1')
+                                    ui.notify(f'💬 Comentario guardado en OV {codigo}', type='info')
 
-                                session.add(orden)
-                                session.commit()
+                                # CASO 2: MOVER DE ETAPA (CON O SIN COMENTARIO)
+                                else:
+                                    orden.estado = EstadoOrden(accion_seleccionada)
+                                    orden.operador_actual = nombre_op
+                                    orden.actualizado_en = datetime.now()
 
-                                ui.card().classes('w-full p-4 bg-green-100 border-l-8 border-green-500 text-green-900 shadow animacion-entrada')
-                                ui.label('✅ ¡MOVIMIENTO REGISTRADO!').classes('font-bold text-lg')
-                                ui.label(f'OV: {orden.numero_ov} | Cliente: {orden.cliente}').classes('text-sm font-semibold')
-                                ui.label(f'De: {estado_previo} ➔ A: {estado_destino}').classes('text-xs font-semibold text-green-800 mt-1')
-                                ui.notify(f'🚀 OV {codigo} movida a {estado_destino}', type='positive')
+                                    obs_final = f"Escaneo por Handheld."
+                                    if comentario_txt:
+                                        obs_final += f" Nota: {comentario_txt}"
+
+                                    registrar_historial(
+                                        session,
+                                        orden.id,
+                                        accion_seleccionada,
+                                        estado_previo,
+                                        nombre_op,
+                                        obs_final
+                                    )
+
+                                    session.add(orden)
+                                    session.commit()
+
+                                    ui.card().classes('w-full p-4 bg-green-100 border-l-8 border-green-500 text-green-900 shadow animacion-entrada')
+                                    ui.label('✅ ¡MOVIMIENTO REGISTRADO!').classes('font-bold text-lg')
+                                    ui.label(f'OV: {orden.numero_ov} | Cliente: {orden.cliente}').classes('text-sm font-semibold')
+                                    ui.label(f'De: {estado_previo} ➔ A: {accion_seleccionada}').classes('text-xs font-semibold text-green-800 mt-1')
+                                    if comentario_txt:
+                                        ui.label(f'Nota agregada: "{comentario_txt}"').classes('text-xs italic text-green-900 mt-1')
+                                    ui.notify(f'🚀 OV {codigo} movida a {accion_seleccionada}', type='positive')
 
                                 notificar_cambio_global(orden.id)
 
                     input_escaneo.value = ''
+                    input_comentario_hh.value = ''
                     input_escaneo.run_method('focus')
 
                 input_escaneo.on('keydown.enter', procesar_escaneo)

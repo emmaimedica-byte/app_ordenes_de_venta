@@ -43,7 +43,7 @@ def registrar_historial(session: Session, orden_id: int, estado_nuevo: str, esta
     session.add(historial_entry)
 
 # ----------------------------------------------------
-# 4. CONFIGURACIÓN DEL FLUJO DE TRABAJO
+# 4. CONFIGURACIÓN DEL FLUJO DE TRABAJO Y COLORES
 # ----------------------------------------------------
 ESTADOS_ORDENADOS = [
     EstadoOrden.LOGISTICA,
@@ -54,13 +54,15 @@ ESTADOS_ORDENADOS = [
     EstadoOrden.ADMINISTRACION_COMPLETADO,
 ]
 
+# Configuración con paleta de colores completa para cada etapa:
+# (Enum, Titulo, Icono, Color_Texto_Icono, Bg_Header, Border_Card, Badge_Color)
 ESTADOS_CONFIG = [
-    (EstadoOrden.LOGISTICA, "📋 Logística", "blue-500", "assignment"),
-    (EstadoOrden.ALMACEN_SURTIDO, "📦 Almacén", "amber-500", "inventory_2"),
-    (EstadoOrden.EMBARQUES_REVISION, "🚛 Embarques", "purple-500", "local_shipping"),
-    (EstadoOrden.CALIDAD_LIBERACION, "🔬 Calidad", "teal-500", "verified"),
-    (EstadoOrden.TRANSPORTE_ENTREGA, "🚚 Transporte", "indigo-500", "commute"),
-    (EstadoOrden.ADMINISTRACION_COMPLETADO, "✅ Administración", "green-600", "check_circle"),
+    (EstadoOrden.LOGISTICA, "📋 Logística", "assignment", "blue-600", "bg-blue-50 border-blue-200", "border-l-4 border-blue-500", "blue-8"),
+    (EstadoOrden.ALMACEN_SURTIDO, "📦 Almacén", "inventory_2", "amber-600", "bg-amber-50 border-amber-200", "border-l-4 border-amber-500", "amber-8"),
+    (EstadoOrden.EMBARQUES_REVISION, "🚛 Embarques", "local_shipping", "purple-600", "bg-purple-50 border-purple-200", "border-l-4 border-purple-500", "purple-8"),
+    (EstadoOrden.CALIDAD_LIBERACION, "🔬 Calidad", "verified", "teal-600", "bg-teal-50 border-teal-200", "border-l-4 border-teal-500", "teal-8"),
+    (EstadoOrden.TRANSPORTE_ENTREGA, "🚚 Transporte", "commute", "indigo-600", "bg-indigo-50 border-indigo-200", "border-l-4 border-indigo-500", "indigo-8"),
+    (EstadoOrden.ADMINISTRACION_COMPLETADO, "✅ Administración", "check_circle", "green-600", "bg-green-50 border-green-200", "border-l-4 border-green-600", "green-8"),
 ]
 
 # ----------------------------------------------------
@@ -146,7 +148,7 @@ def main_page():
     with ui.tab_panels(tabs, value=tab_kanban).classes('w-full bg-slate-50 p-2'):
         
         # ====================================================
-        # PESTAÑA 1: TABLERO GENERAL
+        # PESTAÑA 1: TABLERO GENERAL (CON COLORES DINÁMICOS)
         # ====================================================
         with ui.tab_panel(tab_kanban):
             
@@ -223,7 +225,7 @@ def main_page():
                 notificar_cambio_global(id_creada)
                 refrescar_tablero()
 
-            # MODAL: EDITAR INFORMACIÓN DE OV
+            # MODALES (EDITAR, COMENTAR, HISTORIAL)
             def ver_editar_modal(orden_id: int):
                 with Session(engine) as session:
                     orden = session.get(OrdenVenta, orden_id)
@@ -272,7 +274,6 @@ def main_page():
 
                     dialog.open()
 
-            # MODAL: AGREGAR COMENTARIO
             def ver_comentario_modal(orden_id: int):
                 with Session(engine) as session:
                     orden = session.get(OrdenVenta, orden_id)
@@ -310,7 +311,6 @@ def main_page():
 
                     dialog.open()
 
-            # MODAL: VER HISTORIAL COMPLETO
             def ver_historial_modal(orden_id: int):
                 with Session(engine) as session:
                     orden = session.get(OrdenVenta, orden_id)
@@ -362,7 +362,7 @@ def main_page():
                     ui.button('Crear OV', icon='add', on_click=crear_nueva_ov)\
                         .classes('bg-secondary text-white font-bold')
 
-            # Renderizado de Columnas Kanban
+            # Renderizado de Columnas Kanban con Colores Personalizados
             def render_columnas():
                 with Session(engine) as session:
                     todas_ordenes = session.exec(select(OrdenVenta)).all()
@@ -375,15 +375,16 @@ def main_page():
                     ]
 
                 with ui.row().classes('w-full overflow-x-auto gap-4 p-2 items-start'):
-                    for estado, titulo, color, icono in ESTADOS_CONFIG:
+                    for estado, titulo, icono, color_icon, bg_header, border_card, badge_col in ESTADOS_CONFIG:
                         ordenes_etapa = [o for o in todas_ordenes if o.estado == estado]
                         
-                        with ui.column().classes('min-w-[280px] max-w-[320px] bg-slate-100 p-3 rounded-lg border shadow-sm'):
-                            with ui.row().classes('w-full justify-between items-center mb-3'):
+                        # Columna principal con encabezo coloreado
+                        with ui.column().classes(f'min-w-[280px] max-w-[320px] bg-slate-100 p-3 rounded-lg border shadow-sm'):
+                            with ui.row().classes(f'w-full justify-between items-center mb-3 p-2 rounded {bg_header}'):
                                 with ui.row().classes('items-center gap-2'):
-                                    ui.icon(icono).classes(f'text-{color}')
+                                    ui.icon(icono).classes(f'text-{color_icon}')
                                     ui.label(titulo).classes('font-bold text-gray-800')
-                                ui.badge(str(len(ordenes_etapa)), color='blue-8').classes('rounded-full')
+                                ui.badge(str(len(ordenes_etapa)), color=badge_col).classes('rounded-full')
 
                             if not ordenes_etapa:
                                 ui.label('Sin órdenes').classes('text-xs text-gray-400 italic py-4 text-center w-full')
@@ -393,7 +394,8 @@ def main_page():
                                     clase_animacion = "animacion-entrada ring-2 ring-blue-400" if es_recien_movida else ""
                                     iso_fecha = orden.actualizado_en.isoformat()
 
-                                    with ui.card().classes(f'tarjeta-ov w-full p-3 mb-2 bg-white rounded border shadow-xs {clase_animacion}'):
+                                    # Tarjeta con borde izquierdo del color correspondiente a su etapa
+                                    with ui.card().classes(f'tarjeta-ov w-full p-3 mb-2 bg-white rounded shadow-xs {border_card} {clase_animacion}'):
                                         with ui.row().classes('justify-between items-center w-full'):
                                             ui.label(orden.numero_ov).classes('font-bold text-blue-900 text-base')
                                             
@@ -434,9 +436,9 @@ def main_page():
                 ui.label('Escanea una orden para moverla de etapa o registrar observaciones.')\
                     .classes('text-xs text-gray-500 text-center mb-1')
 
-                # Opciones de Etapa + Opción de Solo Comentar
+                # Opciones de Etapa
                 opciones_etapas = {"SOLO_COMENTARIO": "💬 Solo agregar comentario (Sin mover)"}
-                opciones_etapas.update({e.value: titulo for e, titulo, _, _ in ESTADOS_CONFIG})
+                opciones_etapas.update({e.value: titulo for e, titulo, _, _, _, _, _ in ESTADOS_CONFIG})
 
                 select_etapa = ui.select(
                     options=opciones_etapas,
@@ -484,7 +486,7 @@ def main_page():
                             else:
                                 estado_previo = orden.estado.value
                                 
-                                # CASO 1: SOLO COMENTAR SIN MOVER DE ETAPA
+                                # CASO 1: SOLO COMENTAR
                                 if accion_seleccionada == "SOLO_COMENTARIO":
                                     obs_final = f"Comentario Handheld: {comentario_txt}" if comentario_txt else "Comentario sin texto"
                                     
@@ -505,7 +507,7 @@ def main_page():
                                         ui.label(f'Nota: "{comentario_txt}"').classes('text-xs italic text-blue-800 mt-1')
                                     ui.notify(f'💬 Comentario guardado en OV {codigo}', type='info')
 
-                                # CASO 2: MOVER DE ETAPA (CON O SIN COMENTARIO)
+                                # CASO 2: MOVER DE ETAPA
                                 else:
                                     orden.estado = EstadoOrden(accion_seleccionada)
                                     orden.operador_actual = nombre_op
@@ -547,7 +549,7 @@ def main_page():
                     .classes('w-full bg-green-600 text-white font-bold py-3 text-lg shadow-md hover:scale-105 transition-transform')
 
         # ====================================================
-        # PESTAÑA 3: DASHBOARD DE MÉTRICAS Y KPIS (TIEMPO REAL AUTO)
+        # PESTAÑA 3: DASHBOARD DE MÉTRICAS Y KPIS
         # ====================================================
         with ui.tab_panel(tab_metrics):
             
@@ -584,8 +586,8 @@ def main_page():
                             ui.label('Alertas (>24h)').classes('text-xs font-semibold text-gray-500 uppercase')
                             ui.label(str(alertas)).classes('text-3xl font-extrabold text-red-700')
 
-                    conteo_etapas = [len([o for o in ordenes if o.estado == estado]) for estado, _, _, _ in ESTADOS_CONFIG]
-                    nombres_etapas = [titulo for _, titulo, _, _ in ESTADOS_CONFIG]
+                    conteo_etapas = [len([o for o in ordenes if o.estado == estado]) for estado, _, _, _, _, _, _ in ESTADOS_CONFIG]
+                    nombres_etapas = [titulo for _, titulo, _, _, _, _, _ in ESTADOS_CONFIG]
 
                     ui.label('📊 Distribución de Órdenes por Etapa').classes('text-base font-bold text-gray-700 mt-2 mb-2')
                     

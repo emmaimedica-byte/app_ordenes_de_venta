@@ -7,8 +7,13 @@ from nicegui import ui
 from app.database import create_db_and_tables, engine
 from app.models.orden import OrdenVenta, EstadoOrden, HistorialOrden
 
+from app.repositories.orden_repository import OrdenRepository
+from app.services.orden_service import OrdenService
+
+from app.services.dashboard_service import DashboardService
+
 # ----------------------------------------------------
-# 1. CONTROL DE ESTADO GLOBAL PARA TIEMPO REAL
+#  CONTROL DE ESTADO GLOBAL PARA TIEMPO REAL
 # ----------------------------------------------------
 estado_global = {
     "ultima_actualizacion": datetime.now(),
@@ -20,7 +25,7 @@ def notificar_cambio_global(orden_id: int = None):
     estado_global["ultima_ov_movida"] = orden_id
 
 # ----------------------------------------------------
-# 2. CICLO DE VIDA Y FASTAPI
+#  CICLO DE VIDA Y FASTAPI
 # ----------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -29,30 +34,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Sistema de Seguimiento de Órdenes de Venta", lifespan=lifespan)
 
-# ----------------------------------------------------
-# 3. FUNCIONES AUXILIARES
-# ----------------------------------------------------
-def registrar_historial(session: Session, orden_id: int, estado_nuevo: str, estado_anterior: str = None, operador: str = "Operador General", obs: str = None):
-    historial_entry = HistorialOrden(
-        orden_id=orden_id,
-        estado_anterior=estado_anterior,
-        estado_nuevo=estado_nuevo,
-        usuario_operador=operador,
-        observaciones=obs
-    )
-    session.add(historial_entry)
+orden_repository = OrdenRepository()
+orden_service = OrdenService(orden_repository)
 
-# ----------------------------------------------------
-# 4. CONFIGURACIÓN DEL FLUJO DE TRABAJO Y COLORES
-# ----------------------------------------------------
-ESTADOS_ORDENADOS = [
-    EstadoOrden.LOGISTICA,
-    EstadoOrden.ALMACEN_SURTIDO,
-    EstadoOrden.EMBARQUES_REVISION,
-    EstadoOrden.CALIDAD_LIBERACION,
-    EstadoOrden.TRANSPORTE_ENTREGA,
-    EstadoOrden.ADMINISTRACION_COMPLETADO,
-]
+dashboard_service = DashboardService()
+
+
 
 # Configuración con paleta de colores completa para cada etapa:
 # (Enum, Titulo, Icono, Color_Texto_Icono, Bg_Header, Border_Card, Badge_Color)
@@ -146,12 +133,12 @@ def main_page():
         tab_metrics = ui.tab('Dashboard & KPIs', icon='analytics')
 
     with ui.tab_panels(tabs, value=tab_kanban).classes('w-full bg-slate-50 p-2'):
-        
+
         # ====================================================
         # PESTAÑA 1: TABLERO GENERAL (CON COLORES DINÁMICOS)
         # ====================================================
         with ui.tab_panel(tab_kanban):
-            
+
             def refrescar_tablero():
                 contenedor_tablero.clear()
                 with contenedor_tablero:
@@ -167,105 +154,119 @@ def main_page():
 
             def cambiar_estado_orden(orden_id: int, mover_adelante: bool = True):
                 with Session(engine) as session:
-                    orden = session.get(OrdenVenta, orden_id)
-                    if not orden:
-                        return
-                    
-                    idx_actual = ESTADOS_ORDENADOS.index(orden.estado)
-                    nuevo_idx = idx_actual + 1 if mover_adelante else idx_actual - 1
-                    
-                    if 0 <= nuevo_idx < len(ESTADOS_ORDENADOS):
-                        estado_anterior = orden.estado.value
-                        orden.estado = ESTADOS_ORDENADOS[nuevo_idx]
-                        orden.actualizado_en = datetime.now()
-                        
-                        registrar_historial(
-                            session,
-                            orden.id,
-                            orden.estado.value,
-                            estado_anterior,
-                            "Operador Tablero",
-                            "Avanzó de etapa" if mover_adelante else "Regresó de etapa"
+                    try:
+                        orden = orden_service.mover_orden(
+                            session=session,
+                            orden_id=orden_id,
+                            mover_adelante=mover_adelante,
+                            operador="Operador Tablero",
                         )
-                        session.add(orden)
-                        session.commit()
-                        
-                        ui.notify(f'🚀 OV {orden.numero_ov} movida a {orden.estado.value}', type='info')
+
+                        ui.notify(
+                            f'🚀 OV {orden.numero_ov} movida a {orden.estado.value}',
+                            type='info'
+                        )
+
                         notificar_cambio_global(orden.id)
                         refrescar_tablero()
+
+                    except ValueError as error:
+                        ui.notify(
+                            str(error),
+                            type='warning'
+                        )
 
             def crear_nueva_ov():
                 num_ov = input_ov.value or ''
                 cliente_nombre = input_cliente.value or ''
 
                 if not num_ov.strip():
-                    ui.notify('Ingresa un número de OV válido', type='warning')
+                    ui.notify(
+                        'Ingresa un número de OV válido',
+                        type='warning'
+                    )
                     return
-                
-                with Session(engine) as session:
-                    existente = session.exec(select(OrdenVenta).where(OrdenVenta.numero_ov == num_ov.strip())).first()
-                    if existente:
-                        ui.notify(f'La OV {num_ov} ya existe', type='negative')
-                        return
-                    
-                    nueva = OrdenVenta(numero_ov=num_ov.strip(), cliente=cliente_nombre.strip() or "Cliente General")
-                    session.add(nueva)
-                    session.commit()
-                    session.refresh(nueva)
-                    
-                    registrar_historial(session, nueva.id, nueva.estado.value, None, "Admin / Recepción", "Alta de Orden")
-                    session.commit()
-                    id_creada = nueva.id
 
-                ui.notify(f'✨ OV {num_ov} registrada con éxito', type='positive')
-                
+                with Session(engine) as session:
+                    try:
+                        nueva = orden_service.crear_orden(
+                            session=session,
+                            numero_ov=num_ov,
+                            cliente=cliente_nombre,
+                            operador="Admin / Recepción",
+                        )
+
+                        id_creada = nueva.id
+
+                    except ValueError as error:
+                        ui.notify(
+                            str(error),
+                            type='negative'
+                        )
+                        return
+
+                ui.notify(
+                    f'✨ OV {nueva.numero_ov} registrada con éxito',
+                    type='positive'
+                )
+
                 input_ov.value = ''
                 input_cliente.value = ''
-                
+
                 notificar_cambio_global(id_creada)
                 refrescar_tablero()
 
             # MODALES (EDITAR, COMENTAR, HISTORIAL)
             def ver_editar_modal(orden_id: int):
                 with Session(engine) as session:
-                    orden = session.get(OrdenVenta, orden_id)
+                    orden = orden_repository.obtener_por_id(
+                        session,
+                        orden_id
+                    )
                     if not orden:
                         return
 
                     with ui.dialog() as dialog, ui.card().classes('w-full max-w-md p-6 animacion-entrada'):
                         ui.label(f'✏️ Editar OV {orden.numero_ov}').classes('text-lg font-bold text-blue-900 mb-2')
-                        
+
                         edit_ov = ui.input('Número de OV', value=orden.numero_ov).classes('w-full').props('outlined dense')
                         edit_cliente = ui.input('Nombre del Cliente', value=orden.cliente).classes('w-full mt-2').props('outlined dense')
-                        
+
                         def guardar_cambios():
                             nuevo_num = edit_ov.value.strip()
                             nuevo_cli = edit_cliente.value.strip()
 
                             if not nuevo_num:
-                                ui.notify('El número de OV no puede estar vacío', type='warning')
+                                ui.notify(
+                                    'El número de OV no puede estar vacío',
+                                    type='warning'
+                                )
                                 return
 
                             with Session(engine) as s:
-                                o = s.get(OrdenVenta, orden_id)
-                                if o:
-                                    if nuevo_num != o.numero_ov:
-                                        duplicado = s.exec(select(OrdenVenta).where(OrdenVenta.numero_ov == nuevo_num)).first()
-                                        if duplicado:
-                                            ui.notify('Ese número de OV ya pertenece a otra orden', type='negative')
-                                            return
-                                    
-                                    o.numero_ov = nuevo_num
-                                    o.cliente = nuevo_cli or "Cliente General"
-                                    o.actualizado_en = datetime.now()
-                                    
-                                    registrar_historial(s, o.id, o.estado.value, None, "Admin", f"Edición de datos: OV={nuevo_num}, Cliente={nuevo_cli}")
-                                    s.add(o)
-                                    s.commit()
+                                try:
+                                    orden_actualizada = orden_service.actualizar_orden(
+                                        session=s,
+                                        orden_id=orden_id,
+                                        numero_ov=nuevo_num,
+                                        cliente=nuevo_cli,
+                                        operador="Admin",
+                                    )
 
-                            ui.notify('✅ Orden actualizada correctamente', type='positive')
+                                except ValueError as error:
+                                    ui.notify(
+                                        str(error),
+                                        type='negative'
+                                    )
+                                    return
+
+                            ui.notify(
+                                '✅ Orden actualizada correctamente',
+                                type='positive'
+                            )
+
                             dialog.close()
-                            notificar_cambio_global(orden_id)
+                            notificar_cambio_global(orden_actualizada.id)
                             refrescar_tablero()
 
                         with ui.row().classes('w-full justify-end gap-2 mt-4'):
@@ -276,34 +277,54 @@ def main_page():
 
             def ver_comentario_modal(orden_id: int):
                 with Session(engine) as session:
-                    orden = session.get(OrdenVenta, orden_id)
+                    orden = orden_repository.obtener_por_id(
+                        session,
+                        orden_id
+                    )
                     if not orden:
                         return
 
                     with ui.dialog() as dialog, ui.card().classes('w-full max-w-md p-6 animacion-entrada'):
                         ui.label(f'💬 Agregar Comentario a {orden.numero_ov}').classes('text-lg font-bold text-blue-900 mb-1')
                         ui.label(f'Etapa Actual: {orden.estado.value}').classes('text-xs text-gray-500 mb-2')
-                        
+
                         input_operador = ui.input('Tu Nombre / Usuario', value='Operador').classes('w-full').props('outlined dense')
                         input_comentario = ui.textarea('Escribe tu comentario u observación...').classes('w-full mt-2').props('outlined dense')
-                        
+
                         def guardar_comentario():
                             coment = input_comentario.value.strip()
                             oper = input_operador.value.strip() or "Operador"
 
                             if not coment:
-                                ui.notify('Escribe un comentario antes de guardar', type='warning')
+                                ui.notify(
+                                    'Escribe un comentario antes de guardar',
+                                    type='warning'
+                                )
                                 return
 
                             with Session(engine) as s:
-                                o = s.get(OrdenVenta, orden_id)
-                                if o:
-                                    registrar_historial(s, o.id, o.estado.value, None, oper, f"Comentario: {coment}")
-                                    s.commit()
+                                try:
+                                    orden_actualizada = orden_service.agregar_comentario(
+                                        session=s,
+                                        orden_id=orden_id,
+                                        comentario=coment,
+                                        operador=oper,
+                                    )
 
-                            ui.notify('💬 Comentario añadido al historial', type='positive')
+                                except ValueError as error:
+                                    ui.notify(
+                                        str(error),
+                                        type='negative'
+                                    )
+                                    return
+
+                            ui.notify(
+                                '💬 Comentario añadido al historial',
+                                type='positive'
+                            )
+
                             dialog.close()
-                            notificar_cambio_global(orden_id)
+                            notificar_cambio_global(orden_actualizada.id)
 
                         with ui.row().classes('w-full justify-end gap-2 mt-4'):
                             ui.button('Cancelar', on_click=dialog.close).classes('bg-gray-400 text-white')
@@ -313,27 +334,33 @@ def main_page():
 
             def ver_historial_modal(orden_id: int):
                 with Session(engine) as session:
-                    orden = session.get(OrdenVenta, orden_id)
-                    historial = session.exec(
-                        select(HistorialOrden)
-                        .where(HistorialOrden.orden_id == orden_id)
-                        .order_by(HistorialOrden.fecha_registro.desc())
-                    ).all()
+                    orden = orden_repository.obtener_por_id(
+                        session,
+                        orden_id
+                    )
+
+                    if not orden:
+                        return
+
+                    historial = orden_service.obtener_historial(
+                        session,
+                        orden_id
+                    )
 
                     with ui.dialog() as dialog, ui.card().classes('w-full max-w-lg p-6 animacion-entrada'):
                         ui.label(f'📜 Trazabilidad de {orden.numero_ov}').classes('text-lg font-bold text-blue-900 mb-1')
                         ui.label(f'Cliente: {orden.cliente}').classes('text-sm text-gray-600 mb-4')
-                        
+
                         with ui.column().classes('w-full gap-3 max-h-80 overflow-y-auto'):
                             for item in historial:
                                 with ui.card().classes('w-full p-3 bg-slate-50 border-l-4 border-blue-500 shadow-none'):
                                     with ui.row().classes('justify-between items-center w-full'):
                                         ui.label(f"➡️ {item.estado_nuevo}").classes('font-bold text-sm text-slate-800')
                                         ui.label(item.fecha_registro.strftime('%d/%m/%Y %H:%M:%S')).classes('text-xs text-gray-400')
-                                    
+
                                     if item.estado_anterior:
                                         ui.label(f"Origen: {item.estado_anterior}").classes('text-xs text-gray-500')
-                                    
+
                                     ui.label(f"👤 {item.usuario_operador}").classes('text-xs text-blue-800 mt-1 font-semibold')
                                     if item.observaciones:
                                         ui.label(f"💬 {item.observaciones}").classes('text-xs text-gray-600 italic')
@@ -345,7 +372,7 @@ def main_page():
             with ui.row().classes('w-full mb-4 gap-4 items-center justify-between bg-white p-4 rounded-lg border shadow-xs'):
                 with ui.row().classes('items-center gap-2 flex-1 max-w-md'):
                     ui.icon('search', size='sm').classes('text-gray-400')
-                    
+
                     def filtrar_y_actualizar(e):
                         texto = (e.value or '').lower().strip()
                         filtro_texto['val'] = texto
@@ -365,19 +392,21 @@ def main_page():
             # Renderizado de Columnas Kanban con Colores Personalizados
             def render_columnas():
                 with Session(engine) as session:
-                    todas_ordenes = session.exec(select(OrdenVenta)).all()
+                    todas_ordenes = orden_repository.obtener_todas(
+                        session
+                    )
 
                 if filtro_texto['val']:
                     query = filtro_texto['val']
                     todas_ordenes = [
-                        o for o in todas_ordenes 
+                        o for o in todas_ordenes
                         if query in (o.numero_ov or '').lower() or query in (o.cliente or '').lower()
                     ]
 
                 with ui.row().classes('w-full overflow-x-auto gap-4 p-2 items-start'):
                     for estado, titulo, icono, color_icon, bg_header, border_card, badge_col in ESTADOS_CONFIG:
                         ordenes_etapa = [o for o in todas_ordenes if o.estado == estado]
-                        
+
                         # Columna principal con encabezo coloreado
                         with ui.column().classes(f'min-w-[280px] max-w-[320px] bg-slate-100 p-3 rounded-lg border shadow-sm'):
                             with ui.row().classes(f'w-full justify-between items-center mb-3 p-2 rounded {bg_header}'):
@@ -398,7 +427,7 @@ def main_page():
                                     with ui.card().classes(f'tarjeta-ov w-full p-3 mb-2 bg-white rounded shadow-xs {border_card} {clase_animacion}'):
                                         with ui.row().classes('justify-between items-center w-full'):
                                             ui.label(orden.numero_ov).classes('font-bold text-blue-900 text-base')
-                                            
+
                                             badge_timer = ui.label('calculando...').classes('badge-tiempo text-xs px-2 py-0.5 rounded-full')
                                             badge_timer.props(f'data-iso="{iso_fecha}"')
 
@@ -411,14 +440,14 @@ def main_page():
                                                     .props('flat round dense color=amber-7').tooltip('Editar orden')
 
                                         ui.label(f'👤 {orden.cliente}').classes('text-xs text-gray-600 mb-2')
-                                        
+
                                         with ui.row().classes('w-full justify-between items-center pt-2 border-t border-gray-100'):
                                             if orden.estado != EstadoOrden.LOGISTICA:
                                                 ui.button(icon='arrow_back', on_click=lambda o_id=orden.id: cambiar_estado_orden(o_id, False))\
                                                     .props('flat round dense color=grey-7')
                                             else:
                                                 ui.element('div')
-                                            
+
                                             if orden.estado != EstadoOrden.ADMINISTRACION_COMPLETADO:
                                                 ui.button(icon='arrow_forward', on_click=lambda o_id=orden.id: cambiar_estado_orden(o_id, True))\
                                                     .props('flat round dense color=primary')
@@ -431,7 +460,7 @@ def main_page():
         # ====================================================
         with ui.tab_panel(tab_handheld):
             with ui.column().classes('w-full max-w-md mx-auto items-center p-2 gap-3'):
-                
+
                 ui.label('📱 Módulo Handheld').classes('text-xl font-bold text-blue-900')
                 ui.label('Escanea una orden para moverla de etapa o registrar observaciones.')\
                     .classes('text-xs text-gray-500 text-center mb-1')
@@ -468,14 +497,17 @@ def main_page():
                     codigo = input_escaneo.value.strip()
                     if not codigo:
                         return
-                    
+
                     accion_seleccionada = select_etapa.value
                     nombre_op = input_operador_hh.value.strip() or "Handheld User"
                     comentario_txt = input_comentario_hh.value.strip()
 
                     with Session(engine) as session:
-                        orden = session.exec(select(OrdenVenta).where(OrdenVenta.numero_ov == codigo)).first()
-                        
+                        orden = orden_repository.obtener_por_numero(
+                            session,
+                            codigo
+                        )
+
                         resultado_card.clear()
                         with resultado_card:
                             if not orden:
@@ -485,20 +517,21 @@ def main_page():
                                 ui.notify(f'OV {codigo} no existe', type='negative')
                             else:
                                 estado_previo = orden.estado.value
-                                
+
                                 # CASO 1: SOLO COMENTAR
                                 if accion_seleccionada == "SOLO_COMENTARIO":
-                                    obs_final = f"Comentario Handheld: {comentario_txt}" if comentario_txt else "Comentario sin texto"
-                                    
-                                    registrar_historial(
+                                    obs_final = (
+                                        f"Comentario Handheld: {comentario_txt}"
+                                        if comentario_txt
+                                        else "Comentario sin texto"
+                                    )
+
+                                    orden_service.agregar_comentario(
                                         session,
                                         orden.id,
-                                        estado_previo,
-                                        None,
-                                        nombre_op,
-                                        obs_final
+                                        obs_final,
+                                        operador=nombre_op,
                                     )
-                                    session.commit()
 
                                     ui.card().classes('w-full p-4 bg-blue-100 border-l-8 border-blue-500 text-blue-900 shadow animacion-entrada')
                                     ui.label('💬 ¡COMENTARIO REGISTRADO!').classes('font-bold text-lg')
@@ -509,25 +542,19 @@ def main_page():
 
                                 # CASO 2: MOVER DE ETAPA
                                 else:
-                                    orden.estado = EstadoOrden(accion_seleccionada)
-                                    orden.operador_actual = nombre_op
-                                    orden.actualizado_en = datetime.now()
-
                                     obs_final = f"Escaneo por Handheld."
                                     if comentario_txt:
                                         obs_final += f" Nota: {comentario_txt}"
 
-                                    registrar_historial(
+                                    orden = orden_service.mover_orden_a_estado(
                                         session,
                                         orden.id,
-                                        accion_seleccionada,
-                                        estado_previo,
-                                        nombre_op,
-                                        obs_final
+                                        EstadoOrden(accion_seleccionada),
+                                        operador=nombre_op,
+                                        observaciones=obs_final,
                                     )
 
-                                    session.add(orden)
-                                    session.commit()
+
 
                                     ui.card().classes('w-full p-4 bg-green-100 border-l-8 border-green-500 text-green-900 shadow animacion-entrada')
                                     ui.label('✅ ¡MOVIMIENTO REGISTRADO!').classes('font-bold text-lg')
@@ -552,23 +579,32 @@ def main_page():
         # PESTAÑA 3: DASHBOARD DE MÉTRICAS Y KPIS
         # ====================================================
         with ui.tab_panel(tab_metrics):
-            
+
             def render_dashboard():
                 contenedor_metrics.clear()
                 with Session(engine) as session:
-                    ordenes = session.exec(select(OrdenVenta)).all()
+                    ordenes = orden_repository.obtener_todas(
+                        session
+                    )
 
-                total_ordenes = len(ordenes)
-                completadas = len([o for o in ordenes if o.estado == EstadoOrden.ADMINISTRACION_COMPLETADO])
-                activas = total_ordenes - completadas
-                
-                alertas = len([o for o in ordenes if o.estado != EstadoOrden.ADMINISTRACION_COMPLETADO and (datetime.now() - o.actualizado_en).total_seconds() > 86400])
+                metricas = dashboard_service.calcular_metricas(
+                    ordenes
+                )
+
+                total_ordenes = metricas["total_ordenes"]
+                activas = metricas["activas"]
+                completadas = metricas["completadas"]
+                alertas = metricas["alertas"]
+
+                distribucion = dashboard_service.calcular_distribucion_por_etapa(
+                    ordenes
+                )
 
                 with contenedor_metrics:
                     with ui.row().classes('w-full justify-between items-center mb-4'):
                         ui.label('📈 Indicadores Clave de Operación (KPIs)').classes('text-xl font-bold text-blue-900')
                         ui.label('🟢 En Vivo').classes('text-xs bg-green-100 text-green-800 font-bold px-2.5 py-1 rounded-full border border-green-300')
-                    
+
                     with ui.row().classes('w-full gap-4 mb-6'):
                         with ui.card().classes('flex-1 p-4 bg-blue-50 border-l-4 border-blue-600 shadow-xs hover:scale-105 transition-transform'):
                             ui.label('Total Órdenes').classes('text-xs font-semibold text-gray-500 uppercase')
@@ -586,11 +622,14 @@ def main_page():
                             ui.label('Alertas (>24h)').classes('text-xs font-semibold text-gray-500 uppercase')
                             ui.label(str(alertas)).classes('text-3xl font-extrabold text-red-700')
 
-                    conteo_etapas = [len([o for o in ordenes if o.estado == estado]) for estado, _, _, _, _, _, _ in ESTADOS_CONFIG]
+                    conteo_etapas = [
+                        distribucion.get(estado.value, 0)
+                        for estado in EstadoOrden
+                    ]
                     nombres_etapas = [titulo for _, titulo, _, _, _, _, _ in ESTADOS_CONFIG]
 
                     ui.label('📊 Distribución de Órdenes por Etapa').classes('text-base font-bold text-gray-700 mt-2 mb-2')
-                    
+
                     echart_config = {
                         'xAxis': {'type': 'category', 'data': nombres_etapas, 'axisLabel': {'rotate': 15}},
                         'yAxis': {'type': 'value'},

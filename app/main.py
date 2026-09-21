@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session, select
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -11,6 +12,9 @@ from app.repositories.orden_repository import OrdenRepository
 from app.services.orden_service import OrdenService
 
 from app.services.dashboard_service import DashboardService
+
+from app.ui.layout import crear_layout
+from app.ui.tablero import crear_tablero
 
 # ----------------------------------------------------
 #  CONTROL DE ESTADO GLOBAL PARA TIEMPO REAL
@@ -33,6 +37,12 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="Sistema de Seguimiento de Órdenes de Venta", lifespan=lifespan)
+
+app.mount(
+    "/static",
+    StaticFiles(directory="app/static"),
+    name="static",
+)
 
 orden_repository = OrdenRepository()
 orden_service = OrdenService(orden_repository)
@@ -57,403 +67,27 @@ ESTADOS_CONFIG = [
 # ----------------------------------------------------
 @ui.page('/')
 def main_page():
-    ui.colors(primary='#1E3A8A', secondary='#3B82F6', accent='#10B981')
-
-    # CSS + JavaScript para actualizar los temporizadores automáticamente
-    ui.add_head_html('''
-        <style>
-            @keyframes resaltarEntrada {
-                0% { transform: scale(0.85); opacity: 0.3; }
-                50% { transform: scale(1.03); opacity: 0.9; }
-                100% { transform: scale(1); opacity: 1; }
-            }
-            .animacion-entrada {
-                animation: resaltarEntrada 0.4s ease-out forwards;
-            }
-            .tarjeta-ov {
-                transition: all 0.25s ease-in-out;
-            }
-            .tarjeta-ov:hover {
-                transform: translateY(-2px);
-                box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-            }
-        </style>
-
-        <script>
-            function actualizarTemporizadores() {
-                const elementos = document.querySelectorAll('.badge-tiempo[data-iso]');
-                const ahora = new Date();
-
-                elementos.forEach(el => {
-                    const isoFecha = el.getAttribute('data-iso');
-                    if (!isoFecha) return;
-
-                    const fechaOrden = new Date(isoFecha);
-                    const diffMs = ahora - fechaOrden;
-                    const diffHoras = diffMs / (1000 * 60 * 60);
-
-                    el.className = 'badge-tiempo text-xs px-2 py-0.5 rounded-full transition-colors duration-300 ';
-
-                    if (diffHoras < 4) {
-                        const mins = Math.max(0, Math.floor(diffMs / (1000 * 60)));
-                        el.innerText = `⏱️ ${mins} min`;
-                        el.className += 'bg-green-100 text-green-800 border border-green-300';
-                    } else if (diffHoras < 24) {
-                        const hrs = Math.floor(diffHoras);
-                        el.innerText = `⏳ ${hrs} hrs`;
-                        el.className += 'bg-amber-100 text-amber-800 border border-amber-400';
-                    } else {
-                        const dias = Math.floor(diffHoras / 24);
-                        el.innerText = `🚨 ${dias} día(s)`;
-                        el.className += 'bg-red-100 text-red-800 font-bold border border-red-500';
-                    }
-                });
-            }
-
-            setInterval(actualizarTemporizadores, 10000);
-            document.addEventListener("DOMContentLoaded", actualizarTemporizadores);
-        </script>
-    ''')
-
     filtro_texto = {'val': ''}
     version_cliente_tablero = {'ultima_vista': None}
     version_cliente_metrics = {'ultima_vista': None}
 
-    # Encabezado principal
-    with ui.header().classes('items-center justify-between bg-primary text-white p-3 shadow-md'):
-        with ui.row().classes('items-center gap-2'):
-            ui.icon('local_shipping', size='md')
-            ui.label('Seguimiento de Órdenes de Venta').classes('text-lg md:text-xl font-bold')
-        ui.label('Red: 172.16.31.105:8072').classes('text-xs opacity-80 bg-blue-900 px-3 py-1 rounded-full hidden md:block')
+    tab_panels, tab_kanban, tab_handheld, tab_metrics = crear_layout()
 
-    # Pestañas
-    with ui.tabs().classes('w-full bg-blue-50 border-b') as tabs:
-        tab_kanban = ui.tab('Tablero General', icon='dashboard')
-        tab_handheld = ui.tab('Modo Handheld / Escáner', icon='qr_code_scanner')
-        tab_metrics = ui.tab('Dashboard & KPIs', icon='analytics')
-
-    with ui.tab_panels(tabs, value=tab_kanban).classes('w-full bg-slate-50 p-2'):
+    with tab_panels:
 
         # ====================================================
         # PESTAÑA 1: TABLERO GENERAL (CON COLORES DINÁMICOS)
         # ====================================================
-        with ui.tab_panel(tab_kanban):
-
-            def refrescar_tablero():
-                contenedor_tablero.clear()
-                with contenedor_tablero:
-                    render_columnas()
-                version_cliente_tablero['ultima_vista'] = estado_global['ultima_actualizacion']
-                ui.run_javascript('actualizarTemporizadores();')
-
-            def verificar_cambios_tablero():
-                if version_cliente_tablero['ultima_vista'] != estado_global['ultima_actualizacion']:
-                    refrescar_tablero()
-
-            ui.timer(2.0, verificar_cambios_tablero)
-
-            def cambiar_estado_orden(orden_id: int, mover_adelante: bool = True):
-                with Session(engine) as session:
-                    try:
-                        orden = orden_service.mover_orden(
-                            session=session,
-                            orden_id=orden_id,
-                            mover_adelante=mover_adelante,
-                            operador="Operador Tablero",
-                        )
-
-                        ui.notify(
-                            f'🚀 OV {orden.numero_ov} movida a {orden.estado.value}',
-                            type='info'
-                        )
-
-                        notificar_cambio_global(orden.id)
-                        refrescar_tablero()
-
-                    except ValueError as error:
-                        ui.notify(
-                            str(error),
-                            type='warning'
-                        )
-
-            def crear_nueva_ov():
-                num_ov = input_ov.value or ''
-                cliente_nombre = input_cliente.value or ''
-
-                if not num_ov.strip():
-                    ui.notify(
-                        'Ingresa un número de OV válido',
-                        type='warning'
-                    )
-                    return
-
-                with Session(engine) as session:
-                    try:
-                        nueva = orden_service.crear_orden(
-                            session=session,
-                            numero_ov=num_ov,
-                            cliente=cliente_nombre,
-                            operador="Admin / Recepción",
-                        )
-
-                        id_creada = nueva.id
-
-                    except ValueError as error:
-                        ui.notify(
-                            str(error),
-                            type='negative'
-                        )
-                        return
-
-                ui.notify(
-                    f'✨ OV {nueva.numero_ov} registrada con éxito',
-                    type='positive'
-                )
-
-                input_ov.value = ''
-                input_cliente.value = ''
-
-                notificar_cambio_global(id_creada)
-                refrescar_tablero()
-
-            # MODALES (EDITAR, COMENTAR, HISTORIAL)
-            def ver_editar_modal(orden_id: int):
-                with Session(engine) as session:
-                    orden = orden_repository.obtener_por_id(
-                        session,
-                        orden_id
-                    )
-                    if not orden:
-                        return
-
-                    with ui.dialog() as dialog, ui.card().classes('w-full max-w-md p-6 animacion-entrada'):
-                        ui.label(f'✏️ Editar OV {orden.numero_ov}').classes('text-lg font-bold text-blue-900 mb-2')
-
-                        edit_ov = ui.input('Número de OV', value=orden.numero_ov).classes('w-full').props('outlined dense')
-                        edit_cliente = ui.input('Nombre del Cliente', value=orden.cliente).classes('w-full mt-2').props('outlined dense')
-
-                        def guardar_cambios():
-                            nuevo_num = edit_ov.value.strip()
-                            nuevo_cli = edit_cliente.value.strip()
-
-                            if not nuevo_num:
-                                ui.notify(
-                                    'El número de OV no puede estar vacío',
-                                    type='warning'
-                                )
-                                return
-
-                            with Session(engine) as s:
-                                try:
-                                    orden_actualizada = orden_service.actualizar_orden(
-                                        session=s,
-                                        orden_id=orden_id,
-                                        numero_ov=nuevo_num,
-                                        cliente=nuevo_cli,
-                                        operador="Admin",
-                                    )
-
-                                except ValueError as error:
-                                    ui.notify(
-                                        str(error),
-                                        type='negative'
-                                    )
-                                    return
-
-                            ui.notify(
-                                '✅ Orden actualizada correctamente',
-                                type='positive'
-                            )
-
-                            dialog.close()
-                            notificar_cambio_global(orden_actualizada.id)
-                            refrescar_tablero()
-
-                        with ui.row().classes('w-full justify-end gap-2 mt-4'):
-                            ui.button('Cancelar', on_click=dialog.close).classes('bg-gray-400 text-white')
-                            ui.button('Guardar', icon='save', on_click=guardar_cambios).classes('bg-primary text-white font-bold')
-
-                    dialog.open()
-
-            def ver_comentario_modal(orden_id: int):
-                with Session(engine) as session:
-                    orden = orden_repository.obtener_por_id(
-                        session,
-                        orden_id
-                    )
-                    if not orden:
-                        return
-
-                    with ui.dialog() as dialog, ui.card().classes('w-full max-w-md p-6 animacion-entrada'):
-                        ui.label(f'💬 Agregar Comentario a {orden.numero_ov}').classes('text-lg font-bold text-blue-900 mb-1')
-                        ui.label(f'Etapa Actual: {orden.estado.value}').classes('text-xs text-gray-500 mb-2')
-
-                        input_operador = ui.input('Tu Nombre / Usuario', value='Operador').classes('w-full').props('outlined dense')
-                        input_comentario = ui.textarea('Escribe tu comentario u observación...').classes('w-full mt-2').props('outlined dense')
-
-                        def guardar_comentario():
-                            coment = input_comentario.value.strip()
-                            oper = input_operador.value.strip() or "Operador"
-
-                            if not coment:
-                                ui.notify(
-                                    'Escribe un comentario antes de guardar',
-                                    type='warning'
-                                )
-                                return
-
-                            with Session(engine) as s:
-                                try:
-                                    orden_actualizada = orden_service.agregar_comentario(
-                                        session=s,
-                                        orden_id=orden_id,
-                                        comentario=coment,
-                                        operador=oper,
-                                    )
-
-                                except ValueError as error:
-                                    ui.notify(
-                                        str(error),
-                                        type='negative'
-                                    )
-                                    return
-
-                            ui.notify(
-                                '💬 Comentario añadido al historial',
-                                type='positive'
-                            )
-
-                            dialog.close()
-                            notificar_cambio_global(orden_actualizada.id)
-
-                        with ui.row().classes('w-full justify-end gap-2 mt-4'):
-                            ui.button('Cancelar', on_click=dialog.close).classes('bg-gray-400 text-white')
-                            ui.button('Agregar', icon='send', on_click=guardar_comentario).classes('bg-secondary text-white font-bold')
-
-                    dialog.open()
-
-            def ver_historial_modal(orden_id: int):
-                with Session(engine) as session:
-                    orden = orden_repository.obtener_por_id(
-                        session,
-                        orden_id
-                    )
-
-                    if not orden:
-                        return
-
-                    historial = orden_service.obtener_historial(
-                        session,
-                        orden_id
-                    )
-
-                    with ui.dialog() as dialog, ui.card().classes('w-full max-w-lg p-6 animacion-entrada'):
-                        ui.label(f'📜 Trazabilidad de {orden.numero_ov}').classes('text-lg font-bold text-blue-900 mb-1')
-                        ui.label(f'Cliente: {orden.cliente}').classes('text-sm text-gray-600 mb-4')
-
-                        with ui.column().classes('w-full gap-3 max-h-80 overflow-y-auto'):
-                            for item in historial:
-                                with ui.card().classes('w-full p-3 bg-slate-50 border-l-4 border-blue-500 shadow-none'):
-                                    with ui.row().classes('justify-between items-center w-full'):
-                                        ui.label(f"➡️ {item.estado_nuevo}").classes('font-bold text-sm text-slate-800')
-                                        ui.label(item.fecha_registro.strftime('%d/%m/%Y %H:%M:%S')).classes('text-xs text-gray-400')
-
-                                    if item.estado_anterior:
-                                        ui.label(f"Origen: {item.estado_anterior}").classes('text-xs text-gray-500')
-
-                                    ui.label(f"👤 {item.usuario_operador}").classes('text-xs text-blue-800 mt-1 font-semibold')
-                                    if item.observaciones:
-                                        ui.label(f"💬 {item.observaciones}").classes('text-xs text-gray-600 italic')
-
-                        ui.button('Cerrar', on_click=dialog.close).classes('mt-4 self-end bg-gray-500 text-white')
-                    dialog.open()
-
-            # Panel Superior
-            with ui.row().classes('w-full mb-4 gap-4 items-center justify-between bg-white p-4 rounded-lg border shadow-xs'):
-                with ui.row().classes('items-center gap-2 flex-1 max-w-md'):
-                    ui.icon('search', size='sm').classes('text-gray-400')
-
-                    def filtrar_y_actualizar(e):
-                        texto = (e.value or '').lower().strip()
-                        filtro_texto['val'] = texto
-                        refrescar_tablero()
-
-                    input_buscar = ui.input(
-                        placeholder='Buscar por OV o Cliente...',
-                        on_change=filtrar_y_actualizar
-                    ).classes('w-full').props('dense outlined clearable')
-
-                with ui.row().classes('items-center gap-2 flex-1 justify-end'):
-                    input_ov = ui.input(placeholder='Ej: OV-1001').classes('w-32').props('dense outlined')
-                    input_cliente = ui.input(placeholder='Cliente').classes('w-44').props('dense outlined')
-                    ui.button('Crear OV', icon='add', on_click=crear_nueva_ov)\
-                        .classes('bg-secondary text-white font-bold')
-
-            # Renderizado de Columnas Kanban con Colores Personalizados
-            def render_columnas():
-                with Session(engine) as session:
-                    todas_ordenes = orden_repository.obtener_todas(
-                        session
-                    )
-
-                if filtro_texto['val']:
-                    query = filtro_texto['val']
-                    todas_ordenes = [
-                        o for o in todas_ordenes
-                        if query in (o.numero_ov or '').lower() or query in (o.cliente or '').lower()
-                    ]
-
-                with ui.row().classes('w-full overflow-x-auto gap-4 p-2 items-start'):
-                    for estado, titulo, icono, color_icon, bg_header, border_card, badge_col in ESTADOS_CONFIG:
-                        ordenes_etapa = [o for o in todas_ordenes if o.estado == estado]
-
-                        # Columna principal con encabezo coloreado
-                        with ui.column().classes(f'min-w-[280px] max-w-[320px] bg-slate-100 p-3 rounded-lg border shadow-sm'):
-                            with ui.row().classes(f'w-full justify-between items-center mb-3 p-2 rounded {bg_header}'):
-                                with ui.row().classes('items-center gap-2'):
-                                    ui.icon(icono).classes(f'text-{color_icon}')
-                                    ui.label(titulo).classes('font-bold text-gray-800')
-                                ui.badge(str(len(ordenes_etapa)), color=badge_col).classes('rounded-full')
-
-                            if not ordenes_etapa:
-                                ui.label('Sin órdenes').classes('text-xs text-gray-400 italic py-4 text-center w-full')
-                            else:
-                                for orden in ordenes_etapa:
-                                    es_recien_movida = (orden.id == estado_global["ultima_ov_movida"])
-                                    clase_animacion = "animacion-entrada ring-2 ring-blue-400" if es_recien_movida else ""
-                                    iso_fecha = orden.actualizado_en.isoformat()
-
-                                    # Tarjeta con borde izquierdo del color correspondiente a su etapa
-                                    with ui.card().classes(f'tarjeta-ov w-full p-3 mb-2 bg-white rounded shadow-xs {border_card} {clase_animacion}'):
-                                        with ui.row().classes('justify-between items-center w-full'):
-                                            ui.label(orden.numero_ov).classes('font-bold text-blue-900 text-base')
-
-                                            badge_timer = ui.label('calculando...').classes('badge-tiempo text-xs px-2 py-0.5 rounded-full')
-                                            badge_timer.props(f'data-iso="{iso_fecha}"')
-
-                                            with ui.row().classes('gap-0 items-center'):
-                                                ui.button(icon='visibility', on_click=lambda o_id=orden.id: ver_historial_modal(o_id))\
-                                                    .props('flat round dense color=grey-7').tooltip('Ver historial')
-                                                ui.button(icon='chat_bubble_outline', on_click=lambda o_id=orden.id: ver_comentario_modal(o_id))\
-                                                    .props('flat round dense color=blue-6').tooltip('Agregar comentario')
-                                                ui.button(icon='edit', on_click=lambda o_id=orden.id: ver_editar_modal(o_id))\
-                                                    .props('flat round dense color=amber-7').tooltip('Editar orden')
-
-                                        ui.label(f'👤 {orden.cliente}').classes('text-xs text-gray-600 mb-2')
-
-                                        with ui.row().classes('w-full justify-between items-center pt-2 border-t border-gray-100'):
-                                            if orden.estado != EstadoOrden.LOGISTICA:
-                                                ui.button(icon='arrow_back', on_click=lambda o_id=orden.id: cambiar_estado_orden(o_id, False))\
-                                                    .props('flat round dense color=grey-7')
-                                            else:
-                                                ui.element('div')
-
-                                            if orden.estado != EstadoOrden.ADMINISTRACION_COMPLETADO:
-                                                ui.button(icon='arrow_forward', on_click=lambda o_id=orden.id: cambiar_estado_orden(o_id, True))\
-                                                    .props('flat round dense color=primary')
-
-            contenedor_tablero = ui.column().classes('w-full')
-            refrescar_tablero()
+        crear_tablero(
+            tab_kanban=tab_kanban,
+            filtro_texto=filtro_texto,
+            version_cliente_tablero=version_cliente_tablero,
+            estado_global=estado_global,
+            orden_service=orden_service,
+            orden_repository=orden_repository,
+            notificar_cambio_global=notificar_cambio_global,
+            estados_config=ESTADOS_CONFIG,
+        )
 
         # ====================================================
         # PESTAÑA 2: MÓDULO PARA HANDHELD / ESCÁNER

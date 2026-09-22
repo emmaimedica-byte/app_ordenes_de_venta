@@ -17,28 +17,53 @@ class EstadoOrden(str, Enum):
 # ----------------------------------------------------
 class HistorialOrden(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    orden_id: int = Field(foreign_key="ordenventa.id")
+    orden_id: int = Field(
+        foreign_key="ordenventa.id",
+        nullable=False,
+        )
     estado_anterior: Optional[str] = Field(default=None)
-    estado_nuevo: str
-    usuario_operador: str = Field(default="Sistema / Usuario")
+    estado_nuevo: str = Field(nullable=False)
+    usuario_operador_id: Optional[int] = Field(
+        default=None,
+        foreign_key="usuario.id"
+    )
     observaciones: Optional[str] = Field(default=None)
-    fecha_registro: datetime = Field(default_factory=datetime.now)
+    fecha_registro: datetime = Field(
+        default_factory=datetime.now
+    )
 
     # Relación inversa a la orden
-    orden: Optional["OrdenVenta"] = Relationship(back_populates="historial")
+    orden: Optional["OrdenVenta"] = Relationship(
+        back_populates="historial"
+    )
 
 # ----------------------------------------------------
 # 2. TABLA PRINCIPAL: ORDEN DE VENTA
 # ----------------------------------------------------
 class OrdenVenta(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    numero_ov: str = Field(index=True, unique=True)
-    cliente: str
-    estado: EstadoOrden = Field(default=EstadoOrden.LOGISTICA)
-    operador_actual: Optional[str] = Field(default="Sin Asignar")
+    numero_ov: str = Field(
+        index=True,
+        unique=True,
+        nullable=False
+    )
+    cliente: str = Field(nullable=False)
+    estado: EstadoOrden = Field(
+        default=EstadoOrden.LOGISTICA
+    )
+    operador_actual_id: Optional[int] = Field(
+        default=None,
+        foreign_key="usuario.id"
+    )
     observaciones: Optional[str] = Field(default=None)
-    creado_en: datetime = Field(default_factory=datetime.now)
-    actualizado_en: datetime = Field(default_factory=datetime.now)
+    creado_en: datetime = Field(
+        default_factory=datetime.now
+    )
+    actualizado_en: datetime = Field(
+        default_factory=datetime.now
+    )
 
     # Relación: Una orden tiene muchos registros de historial
-    historial: List[HistorialOrden] = Relationship(back_populates="orden")
+    historial: List[HistorialOrden] = Relationship(
+        back_populates="orden"
+    )

@@ -1,7 +1,30 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, SQLModel, Relationship
+from enum import Enum
+from app.models.rol import Rol
+
+class Departamento(str, Enum):
+    ALMACEN = "Almacén"
+    BEDCARE = "Bedcare"
+    CALIDAD = "Calidad"
+    COMPRAS_IMPORTACIONES = "Compras e Importaciones"
+    CONMED = "Conmed"
+    CONTABILIDAD = "Contabilidad"
+    CREDITO_COBRANZA = "Crédito y Cobranza"
+    DIRECCION_GENERAL = "Dirección General"
+    ESPECIALIDADES = "Especialidades"
+    FINANZAS = "Finanzas"
+    LICITACIONES = "Licitaciones"
+    MERCADOTECNIA = "Mercadotecnia"
+    PROYECTOS = "Proyectos"
+    RECURSOS_HUMANOS = "Recursos Humanos"
+    SAP = "SAP"
+    STERIS = "Steris"
+    TECNICOS = "Técnicos"
+    TI = "TI"
+    VENTAS = "Ventas"
 
 
 class Usuario(SQLModel, table=True):
@@ -22,7 +45,9 @@ class Usuario(SQLModel, table=True):
         nullable=False,
     )
 
-    departamento: str = Field(nullable=False)
+    rol: Optional[Rol] = Relationship()
+
+    departamento: Departamento = Field(nullable=False)
 
     creado_por_id: Optional[int] = Field(
         default=None,

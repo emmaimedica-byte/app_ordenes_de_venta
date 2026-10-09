@@ -8,6 +8,8 @@ from app.models.orden import (
     OrdenVenta,
 )
 from app.repositories.orden_repository import OrdenRepository
+from app.services.authorization_service import AuthorizationService
+from app.models.usuario import Usuario
 
 
 ESTADOS_ORDENADOS = [
@@ -22,13 +24,22 @@ ESTADOS_ORDENADOS = [
 
 class OrdenService:
 
-    def __init__(self, repository: OrdenRepository):
+    def __init__(
+        self,
+        repository: OrdenRepository,
+        authorization_service: AuthorizationService | None = None,
+    ):
         self.repository = repository
+        self.authorization_service = (
+            authorization_service or AuthorizationService()
+        )
+
 
     def mover_orden(
         self,
         session: Session,
         orden_id: int,
+        usuario_id: int,
         mover_adelante: bool = True,
         operador: str = "Operador Tablero",
         observaciones: str | None = None,
@@ -55,18 +66,34 @@ class OrdenService:
                 "La orden no puede moverse en esa dirección"
             )
 
+        estado_destino = ESTADOS_ORDENADOS[nuevo_indice]
+        usuario = session.get(Usuario, usuario_id)
+
+        if not usuario:
+            raise ValueError("El usuario no existe")
+
+        if not self.authorization_service.puede_mover_orden(
+            session,
+            usuario,
+            orden,
+            estado_destino,
+        ):
+            raise PermissionError(
+                "El usuario no tiene autorización para mover esta orden"
+            )
+
         estado_anterior = orden.estado.value
         nuevo_estado = ESTADOS_ORDENADOS[nuevo_indice]
 
         orden.estado = nuevo_estado
         orden.actualizado_en = datetime.now()
-        orden.operador_actual = operador
+        orden.operador_actual_id = usuario.id
 
         historial = HistorialOrden(
             orden_id=orden.id,
             estado_anterior=estado_anterior,
             estado_nuevo=nuevo_estado.value,
-            usuario_operador=operador,
+            usuario_operador_id=usuario.id,
             observaciones=(
                 observaciones
                 or (
@@ -276,6 +303,7 @@ class OrdenService:
         session: Session,
         orden_id: int,
         nuevo_estado: EstadoOrden,
+        usuario_id: int,
         operador: str = "Handheld_User",
         observaciones: str | None = None,
     ) -> OrdenVenta:
@@ -293,17 +321,32 @@ class OrdenService:
                 "La orden ya se encuentra en esa etapa"
             )
 
+        usuario = session.get(Usuario, usuario_id)
+
+        if not usuario:
+            raise ValueError("El usuario no existe")
+
+        if not self.authorization_service.puede_mover_orden(
+            session,
+            usuario,
+            orden,
+            nuevo_estado,
+        ):
+            raise PermissionError(
+                "El usuario no tiene autorización para mover esta orden"
+            )
+
         estado_anterior = orden.estado.value
 
         orden.estado = nuevo_estado
         orden.actualizado_en = datetime.now()
-        orden.operador_actual = operador
+        orden.operador_actual_id = usuario.id
 
         historial = HistorialOrden(
             orden_id=orden.id,
             estado_anterior=estado_anterior,
             estado_nuevo=nuevo_estado.value,
-            usuario_operador=operador,
+            usuario_operador_id=usuario.id,
             observaciones=(
                 observaciones
                 or "Movimiento realizado desde Handheld"

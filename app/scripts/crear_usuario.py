@@ -7,12 +7,53 @@ from app.models.usuario import Departamento
 from app.services.usuario_service import UsuarioService
 
 
+ROLES_DISPONIBLES = {
+    "1": ("ADMINISTRADOR", "Administrador"),
+    "2": ("OPERADOR", "Operador"),
+    "3": ("CHOFER", "Chofer"),
+    "4": ("CALIDAD", "Calidad"),
+    "5": ("CONSULTA", "Consulta"),
+}
+
+
 def crear_usuario():
-    print("=== Crear usuario administrador ===")
+    print("=== Crear usuario ===")
     print()
+
+    for opcion, (_, nombre_rol) in ROLES_DISPONIBLES.items():
+        print(f"{opcion}. {nombre_rol}")
+
+    opcion = input("\nSelecciona el rol: ").strip()
+
+    if opcion not in ROLES_DISPONIBLES:
+        print("Error: selecciona un rol válido.")
+        return
+
+    rol_codigo, nombre_rol = ROLES_DISPONIBLES[opcion]
 
     username = input("Username: ").strip().lower()
     nombre = input("Nombre completo: ").strip()
+
+    print("\nDepartamentos disponibles:")
+    for departamento in Departamento:
+        print(f"- {departamento.value}")
+
+    departamento_texto = input(
+        "\nEscribe el departamento: "
+    ).strip()
+
+    departamento = next(
+        (
+            item
+            for item in Departamento
+            if item.value.lower() == departamento_texto.lower()
+        ),
+        None,
+    )
+
+    if departamento is None:
+        print("Error: el departamento no es válido.")
+        return
 
     password = getpass("Contraseña: ")
     confirmar_password = getpass("Confirmar contraseña: ")
@@ -30,24 +71,22 @@ def crear_usuario():
                 username=username,
                 nombre=nombre,
                 password=password,
-                rol_codigo="ADMINISTRADOR",
-                departamento=Departamento.SAP,
+                rol_codigo=rol_codigo,
+                departamento=departamento,
                 creado_por_id=None,
             )
 
             session.commit()
 
-            print()
-            print("Usuario administrador creado correctamente.")
+            print("\nUsuario creado correctamente.")
             print(f"ID: {usuario.id}")
             print(f"Username: {usuario.username}")
             print(f"Nombre: {usuario.nombre}")
-            print("Rol: Administrador")
+            print(f"Rol: {nombre_rol}")
             print(f"Departamento: {usuario.departamento.value}")
 
     except ValueError as error:
-        print()
-        print(f"Error: {error}")
+        print(f"\nError: {error}")
 
 
 if __name__ == "__main__":

@@ -3,6 +3,8 @@ from sqlmodel import Session
 
 from app.database import engine
 from app.models.orden import EstadoOrden
+from app.services.authorization_service import AuthorizationService
+from app.models.usuario import Usuario
 
 def crear_tablero(
     tab_kanban,
@@ -13,7 +15,12 @@ def crear_tablero(
     orden_repository,
     notificar_cambio_global,
     estados_config,
+    usuario_id,
+    usuario_rol,
 ):
+
+    authorization_service = AuthorizationService()
+
     with ui.tab_panel(tab_kanban):
 
             def refrescar_tablero():
@@ -29,14 +36,16 @@ def crear_tablero(
 
             ui.timer(2.0, verificar_cambios_tablero)
 
+
             def cambiar_estado_orden(orden_id: int, mover_adelante: bool = True):
                 with Session(engine) as session:
                     try:
                         orden = orden_service.mover_orden(
                             session=session,
                             orden_id=orden_id,
+                            usuario_id=usuario_id,
                             mover_adelante=mover_adelante,
-                            operador="Operador Tablero",
+                            operador=usuario_rol,
                         )
 
                         ui.notify(
@@ -47,11 +56,12 @@ def crear_tablero(
                         notificar_cambio_global(orden.id)
                         refrescar_tablero()
 
+                    except PermissionError as error:
+                        ui.notify(str(error), type='negative')
+
                     except ValueError as error:
-                        ui.notify(
-                            str(error),
-                            type='warning'
-                        )
+                        ui.notify(str(error), type='warning')
+
 
             def crear_nueva_ov():
                 num_ov = input_ov.value or ''
@@ -66,11 +76,30 @@ def crear_tablero(
 
                 with Session(engine) as session:
                     try:
+                        usuario = session.get(Usuario, usuario_id)
+
+                        if (
+                            usuario is None
+                            or not usuario.activo
+                            or usuario.rol is None
+                            or not usuario.rol.activo
+                            or not authorization_service.tiene_permiso(
+                                session,
+                                usuario,
+                                'orden.crear'
+                            )
+                        ):
+                            ui.notify(
+                                'No tienes permiso para crear órdenes de venta.',
+                                type='negative'
+                            )
+                            return
+
                         nueva = orden_service.crear_orden(
                             session=session,
                             numero_ov=num_ov,
                             cliente=cliente_nombre,
-                            operador="Admin / Recepción",
+                            operador=usuario.rol.codigo,
                         )
 
                         id_creada = nueva.id
@@ -109,6 +138,7 @@ def crear_tablero(
                         edit_ov = ui.input('Número de OV', value=orden.numero_ov).classes('w-full').props('outlined dense')
                         edit_cliente = ui.input('Nombre del Cliente', value=orden.cliente).classes('w-full mt-2').props('outlined dense')
 
+
                         def guardar_cambios():
                             nuevo_num = edit_ov.value.strip()
                             nuevo_cli = edit_cliente.value.strip()
@@ -122,12 +152,31 @@ def crear_tablero(
 
                             with Session(engine) as s:
                                 try:
+                                    usuario = s.get(Usuario, usuario_id)
+
+                                    if (
+                                        usuario is None
+                                        or not usuario.activo
+                                        or usuario.rol is None
+                                        or not usuario.rol.activo
+                                        or not authorization_service.tiene_permiso(
+                                            s,
+                                            usuario,
+                                            'orden.editar'
+                                        )
+                                    ):
+                                        ui.notify(
+                                            'No tienes permiso para editar órdenes de venta.',
+                                            type='negative'
+                                        )
+                                        return
+
                                     orden_actualizada = orden_service.actualizar_orden(
                                         session=s,
                                         orden_id=orden_id,
                                         numero_ov=nuevo_num,
                                         cliente=nuevo_cli,
-                                        operador="Admin",
+                                        operador=usuario.rol.codigo,
                                     )
 
                                 except ValueError as error:
@@ -145,6 +194,7 @@ def crear_tablero(
                             dialog.close()
                             notificar_cambio_global(orden_actualizada.id)
                             refrescar_tablero()
+
 
                         with ui.row().classes('w-full justify-end gap-2 mt-4'):
                             ui.button('Cancelar', on_click=dialog.close).classes('bg-gray-400 text-white')
@@ -168,9 +218,9 @@ def crear_tablero(
                         input_operador = ui.input('Tu Nombre / Usuario', value='Operador').classes('w-full').props('outlined dense')
                         input_comentario = ui.textarea('Escribe tu comentario u observación...').classes('w-full mt-2').props('outlined dense')
 
+
                         def guardar_comentario():
                             coment = input_comentario.value.strip()
-                            oper = input_operador.value.strip() or "Operador"
 
                             if not coment:
                                 ui.notify(
@@ -181,11 +231,30 @@ def crear_tablero(
 
                             with Session(engine) as s:
                                 try:
+                                    usuario = s.get(Usuario, usuario_id)
+
+                                    if (
+                                        usuario is None
+                                        or not usuario.activo
+                                        or usuario.rol is None
+                                        or not usuario.rol.activo
+                                        or not authorization_service.tiene_permiso(
+                                            s,
+                                            usuario,
+                                            'orden.comentar'
+                                        )
+                                    ):
+                                        ui.notify(
+                                            'No tienes permiso para comentar órdenes de venta.',
+                                            type='negative'
+                                        )
+                                        return
+
                                     orden_actualizada = orden_service.agregar_comentario(
                                         session=s,
                                         orden_id=orden_id,
                                         comentario=coment,
-                                        operador=oper,
+                                        operador=usuario.rol.codigo,
                                     )
 
                                 except ValueError as error:
@@ -203,6 +272,7 @@ def crear_tablero(
                             dialog.close()
                             notificar_cambio_global(orden_actualizada.id)
 
+
                         with ui.row().classes('w-full justify-end gap-2 mt-4'):
                             ui.button('Cancelar', on_click=dialog.close).classes('bg-gray-400 text-white')
                             ui.button('Agregar', icon='send', on_click=guardar_comentario).classes('bg-secondary text-white font-bold')
@@ -211,12 +281,35 @@ def crear_tablero(
 
             def ver_historial_modal(orden_id: int):
                 with Session(engine) as session:
+                    usuario = session.get(Usuario, usuario_id)
+
+                    if (
+                        usuario is None
+                        or not usuario.activo
+                        or usuario.rol is None
+                        or not usuario.rol.activo
+                        or not authorization_service.tiene_permiso(
+                            session,
+                            usuario,
+                            'orden.ver_historial'
+                        )
+                    ):
+                        ui.notify(
+                            'No tienes permiso para consultar el historial.',
+                            type='negative'
+                        )
+                        return
+
                     orden = orden_repository.obtener_por_id(
                         session,
                         orden_id
                     )
 
                     if not orden:
+                        ui.notify(
+                            'No se encontró la orden de venta.',
+                            type='warning'
+                        )
                         return
 
                     historial = orden_service.obtener_historial(
@@ -224,26 +317,87 @@ def crear_tablero(
                         orden_id
                     )
 
-                    with ui.dialog() as dialog, ui.card().classes('w-full max-w-lg p-6 animacion-entrada'):
-                        ui.label(f'📜 Trazabilidad de {orden.numero_ov}').classes('text-lg font-bold text-blue-900 mb-1')
-                        ui.label(f'Cliente: {orden.cliente}').classes('text-sm text-gray-600 mb-4')
+                    with ui.dialog() as dialog, ui.card().classes(
+                        'w-full max-w-lg p-6 animacion-entrada'
+                    ):
+                        ui.label(
+                            f'📜 Trazabilidad de {orden.numero_ov}'
+                        ).classes(
+                            'text-lg font-bold text-blue-900 mb-1'
+                        )
 
-                        with ui.column().classes('w-full gap-3 max-h-80 overflow-y-auto'):
+                        ui.label(
+                            f'Cliente: {orden.cliente}'
+                        ).classes(
+                            'text-sm text-gray-600 mb-4'
+                        )
+
+                        with ui.column().classes(
+                            'w-full gap-3 max-h-80 overflow-y-auto'
+                        ):
                             for item in historial:
-                                with ui.card().classes('w-full p-3 bg-slate-50 border-l-4 border-blue-500 shadow-none'):
-                                    with ui.row().classes('justify-between items-center w-full'):
-                                        ui.label(f"➡️ {item.estado_nuevo}").classes('font-bold text-sm text-slate-800')
-                                        ui.label(item.fecha_registro.strftime('%d/%m/%Y %H:%M:%S')).classes('text-xs text-gray-400')
+                                with ui.card().classes(
+                                    'w-full p-3 bg-slate-50 border-l-4 '
+                                    'border-blue-500 shadow-none'
+                                ):
+                                    with ui.row().classes(
+                                        'justify-between items-center w-full'
+                                    ):
+                                        ui.label(
+                                            f'➡️ {item.estado_nuevo}'
+                                        ).classes(
+                                            'font-bold text-sm text-slate-800'
+                                        )
+
+                                        ui.label(
+                                            item.fecha_registro.strftime(
+                                                '%d/%m/%Y %H:%M:%S'
+                                            )
+                                        ).classes(
+                                            'text-xs text-gray-400'
+                                        )
 
                                     if item.estado_anterior:
-                                        ui.label(f"Origen: {item.estado_anterior}").classes('text-xs text-gray-500')
+                                        ui.label(
+                                            f'Origen: {item.estado_anterior}'
+                                        ).classes(
+                                            'text-xs text-gray-500'
+                                        )
 
-                                    ui.label(f"👤 {item.usuario_operador}").classes('text-xs text-blue-800 mt-1 font-semibold')
+                                    usuario_historial = (
+                                        session.get(Usuario, item.usuario_operador_id)
+                                        if item.usuario_operador_id is not None
+                                        else None
+                                    )
+
+                                    nombre_operador = (
+                                        usuario_historial.nombre
+                                        if usuario_historial
+                                        else 'Usuario no disponible'
+                                    )
+
+                                    ui.label(
+                                        f'👤 {nombre_operador}'
+                                    ).classes(
+                                        'text-xs text-blue-800 mt-1 font-semibold'
+                                    )
+
                                     if item.observaciones:
-                                        ui.label(f"💬 {item.observaciones}").classes('text-xs text-gray-600 italic')
+                                        ui.label(
+                                            f'💬 {item.observaciones}'
+                                        ).classes(
+                                            'text-xs text-gray-600 italic'
+                                        )
 
-                        ui.button('Cerrar', on_click=dialog.close).classes('mt-4 self-end bg-gray-500 text-white')
+                        ui.button(
+                            'Cerrar',
+                            on_click=dialog.close
+                        ).classes(
+                            'mt-4 self-end bg-gray-500 text-white'
+                        )
+
                     dialog.open()
+
 
             # Panel Superior
             with ui.row().classes('w-full mb-4 gap-4 items-center justify-between bg-white p-4 rounded-lg border shadow-xs'):
@@ -272,6 +426,71 @@ def crear_tablero(
                     todas_ordenes = orden_repository.obtener_todas(
                         session
                     )
+
+                    usuario = session.get(Usuario, usuario_id)
+
+                    usuario_autorizado = (
+                        usuario is not None
+                        and usuario.activo
+                        and usuario.rol is not None
+                        and usuario.rol.activo
+                    )
+
+                    puede_ver_historial = (
+                        usuario_autorizado
+                        and authorization_service.tiene_permiso(
+                            session, usuario, 'orden.ver_historial'
+                        )
+                    )
+
+                    puede_comentar = (
+                        usuario_autorizado
+                        and authorization_service.tiene_permiso(
+                            session, usuario, 'orden.comentar'
+                        )
+                    )
+
+                    puede_editar = (
+                        usuario_autorizado
+                        and authorization_service.tiene_permiso(
+                            session, usuario, 'orden.editar'
+                        )
+                    )
+
+                    estados_orden = [
+                        configuracion[0]
+                        for configuracion in estados_config
+                    ]
+
+                    puede_avanzar_por_orden = {}
+                    puede_retroceder_por_orden = {}
+
+                    for orden in todas_ordenes:
+                        indice_estado = estados_orden.index(
+                            orden.estado
+                        )
+
+                        puede_avanzar_por_orden[orden.id] = (
+                            usuario_autorizado
+                            and indice_estado < len(estados_orden) - 1
+                            and authorization_service.puede_mover_orden(
+                                session,
+                                usuario,
+                                orden,
+                                estados_orden[indice_estado + 1],
+                            )
+                        )
+
+                        puede_retroceder_por_orden[orden.id] = (
+                            usuario_autorizado
+                            and indice_estado > 0
+                            and authorization_service.puede_mover_orden(
+                                session,
+                                usuario,
+                                orden,
+                                estados_orden[indice_estado - 1],
+                            )
+                        )
 
                 if filtro_texto['val']:
                     query = filtro_texto['val']
@@ -309,25 +528,53 @@ def crear_tablero(
                                             badge_timer.props(f'data-iso="{iso_fecha}"')
 
                                             with ui.row().classes('gap-0 items-center'):
-                                                ui.button(icon='visibility', on_click=lambda o_id=orden.id: ver_historial_modal(o_id))\
-                                                    .props('flat round dense color=grey-7').tooltip('Ver historial')
-                                                ui.button(icon='chat_bubble_outline', on_click=lambda o_id=orden.id: ver_comentario_modal(o_id))\
-                                                    .props('flat round dense color=blue-6').tooltip('Agregar comentario')
-                                                ui.button(icon='edit', on_click=lambda o_id=orden.id: ver_editar_modal(o_id))\
-                                                    .props('flat round dense color=amber-7').tooltip('Editar orden')
+                                                if puede_ver_historial:
+                                                    ui.button(
+                                                        icon='visibility',
+                                                        on_click=lambda o_id=orden.id: ver_historial_modal(o_id)
+                                                    ).props(
+                                                        'flat round dense color=grey-7'
+                                                    ).tooltip('Ver historial')
+
+                                                if puede_comentar:
+                                                    ui.button(
+                                                        icon='chat_bubble_outline',
+                                                        on_click=lambda o_id=orden.id: ver_comentario_modal(o_id)
+                                                    ).props(
+                                                        'flat round dense color=blue-6'
+                                                    ).tooltip('Agregar comentario')
+
+                                                if puede_editar:
+                                                    ui.button(
+                                                        icon='edit',
+                                                        on_click=lambda o_id=orden.id: ver_editar_modal(o_id)
+                                                    ).props(
+                                                        'flat round dense color=amber-7'
+                                                    ).tooltip('Editar orden')
 
                                         ui.label(f'👤 {orden.cliente}').classes('text-xs text-gray-600 mb-2')
 
-                                        with ui.row().classes('w-full justify-between items-center pt-2 border-t border-gray-100'):
-                                            if orden.estado != EstadoOrden.LOGISTICA:
-                                                ui.button(icon='arrow_back', on_click=lambda o_id=orden.id: cambiar_estado_orden(o_id, False))\
-                                                    .props('flat round dense color=grey-7')
+                                        with ui.row().classes(
+                                            'w-full justify-between items-center pt-2 border-t border-gray-100'
+                                        ):
+                                            if puede_retroceder_por_orden[orden.id]:
+                                                ui.button(
+                                                    icon='arrow_back',
+                                                    on_click=lambda o_id=orden.id: cambiar_estado_orden(
+                                                        o_id, False
+                                                    )
+                                                ).props('flat round dense color=grey-7')
                                             else:
                                                 ui.element('div')
 
-                                            if orden.estado != EstadoOrden.ADMINISTRACION_COMPLETADO:
-                                                ui.button(icon='arrow_forward', on_click=lambda o_id=orden.id: cambiar_estado_orden(o_id, True))\
-                                                    .props('flat round dense color=primary')
+                                            if puede_avanzar_por_orden[orden.id]:
+                                                ui.button(
+                                                    icon='arrow_forward',
+                                                    on_click=lambda o_id=orden.id: cambiar_estado_orden(
+                                                        o_id, True
+                                                    )
+                                                ).props('flat round dense color=primary')
+
 
             contenedor_tablero = ui.column().classes('w-full')
             refrescar_tablero()

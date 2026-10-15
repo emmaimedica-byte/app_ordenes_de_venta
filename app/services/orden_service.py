@@ -10,6 +10,7 @@ from app.models.orden import (
 from app.repositories.orden_repository import OrdenRepository
 from app.services.authorization_service import AuthorizationService
 from app.models.usuario import Usuario
+from app.models.asignacion import TipoAsignacion
 
 
 ESTADOS_ORDENADOS = [
@@ -116,10 +117,31 @@ class OrdenService:
     def crear_orden(
         self,
         session: Session,
+        usuario_id: int,
         numero_ov: str,
         cliente: str = "Cliente General",
         operador: str = "Admin / Recepción",
     ) -> OrdenVenta:
+
+        usuario = session.get(Usuario, usuario_id)
+
+        if not usuario:
+            raise ValueError("El usuario no existe")
+
+        if not usuario.activo:
+            raise PermissionError("El usuario está inactivo")
+
+        if not usuario.rol or not usuario.rol.activo:
+            raise PermissionError("El usuario no tiene un rol activo")
+
+        if not self.authorization_service.tiene_permiso(
+            session,
+            usuario,
+            "orden.crear",
+        ):
+            raise PermissionError(
+                "El usuario no tiene permiso para crear órdenes"
+            )
 
         numero_ov = numero_ov.strip()
 
@@ -168,6 +190,7 @@ class OrdenService:
         self,
         session: Session,
         orden_id: int,
+        usuario_id: int,
         numero_ov: str,
         cliente: str,
         operador: str = "Admin",
@@ -189,6 +212,23 @@ class OrdenService:
         if not orden:
             raise ValueError(
                 "La orden no existe"
+            )
+
+        usuario = session.get(Usuario, usuario_id)
+
+        if (
+            usuario is None
+            or not usuario.activo
+            or usuario.rol is None
+            or not usuario.rol.activo
+            or not self.authorization_service.tiene_permiso(
+                session,
+                usuario,
+                "orden.editar",
+            )
+        ):
+            raise PermissionError(
+                "El usuario no tiene autorización para editar esta orden"
             )
 
         if numero_ov != orden.numero_ov:
@@ -238,6 +278,7 @@ class OrdenService:
         self,
         session: Session,
         orden_id: int,
+        usuario_id: int,
         comentario: str,
         operador: str = "Operador",
     ) -> OrdenVenta:
@@ -260,6 +301,49 @@ class OrdenService:
                 "La orden no existe"
             )
 
+
+        usuario = session.get(Usuario, usuario_id)
+
+        if (
+            usuario is None
+            or not usuario.activo
+            or usuario.rol is None
+            or not usuario.rol.activo
+            or not self.authorization_service.tiene_permiso(
+                session,
+                usuario,
+                "orden.comentar",
+            )
+        ):
+            raise PermissionError(
+                "El usuario no tiene autorización para comentar en esta orden"
+            )
+
+
+        if usuario.rol.codigo == "OPERADOR":
+            if not self.authorization_service.tiene_asignacion(
+                session,
+                usuario,
+                orden.id,
+                TipoAsignacion.OPERADOR,
+            ):
+                raise PermissionError(
+                    "El operador no tiene asignada esta orden"
+                )
+
+        elif usuario.rol.codigo == "CHOFER":
+            if not self.authorization_service.tiene_asignacion(
+                session,
+                usuario,
+                orden.id,
+                TipoAsignacion.CHOFER,
+            ):
+                raise PermissionError(
+                    "El chofer no tiene asignada esta orden"
+                )
+
+
+
         historial = HistorialOrden(
             orden_id=orden.id,
             estado_anterior=None,
@@ -281,6 +365,7 @@ class OrdenService:
         self,
         session: Session,
         orden_id: int,
+        usuario_id: int,
     ) -> list[HistorialOrden]:
 
         orden = self.repository.obtener_por_id(
@@ -292,6 +377,47 @@ class OrdenService:
             raise ValueError(
                 "La orden no existe"
             )
+
+
+        usuario = session.get(Usuario, usuario_id)
+
+        if (
+            usuario is None
+            or not usuario.activo
+            or usuario.rol is None
+            or not usuario.rol.activo
+            or not self.authorization_service.tiene_permiso(
+                session,
+                usuario,
+                "orden.ver_historial",
+            )
+        ):
+            raise PermissionError(
+                "El usuario no tiene autorización para consultar el historial"
+            )
+
+        if usuario.rol.codigo == "OPERADOR":
+            if not self.authorization_service.tiene_asignacion(
+                session,
+                usuario,
+                orden.id,
+                TipoAsignacion.OPERADOR,
+            ):
+                raise PermissionError(
+                    "El operador no tiene asignada esta orden"
+                )
+
+        elif usuario.rol.codigo == "CHOFER":
+            if not self.authorization_service.tiene_asignacion(
+                session,
+                usuario,
+                orden.id,
+                TipoAsignacion.CHOFER,
+            ):
+                raise PermissionError(
+                    "El chofer no tiene asignada esta orden"
+                )
+
 
         return self.repository.obtener_historial(
             session,

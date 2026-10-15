@@ -214,6 +214,7 @@ def main_page():
         if tab_asignaciones is not None:
             crear_asignaciones(
                 tab_asignaciones=tab_asignaciones,
+                usuario_actual_id=usuario.id,
             )
 
 

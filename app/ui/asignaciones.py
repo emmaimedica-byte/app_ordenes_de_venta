@@ -1,5 +1,5 @@
 
-from nicegui import ui
+from nicegui import ui, run
 from sqlmodel import Session, select
 
 from app.database import engine
@@ -9,12 +9,17 @@ from app.models.usuario import Usuario
 from app.repositories.asignacion_repository import AsignacionRepository
 from app.repositories.orden_repository import OrdenRepository
 from app.repositories.usuario_repository import UsuarioRepository
+from app.services.asignacion_service import AsignacionService
 
-
-def crear_asignaciones(tab_asignaciones):
+def crear_asignaciones(tab_asignaciones, usuario_actual_id):
     asignacion_repository = AsignacionRepository()
     orden_repository = OrdenRepository()
     usuario_repository = UsuarioRepository()
+
+    asignacion_service = AsignacionService(
+        asignacion_repository=asignacion_repository,
+        orden_repository=orden_repository,
+    )
 
     with ui.tab_panel(tab_asignaciones):
         ui.label('Administración de Asignaciones').classes(
@@ -93,88 +98,158 @@ def crear_asignaciones(tab_asignaciones):
                 lambda _: actualizar_usuarios()
             )
 
-            ui.label(
-                'La asignación se habilitará cuando conectemos las acciones '
-                'al servicio de asignaciones.'
-            ).classes('text-sm text-gray-500')
+
+            def asignar():
+                if not orden_select.value:
+                    ui.notify(
+                        'Selecciona una orden de venta.',
+                        type='warning',
+                    )
+                    return
+
+                if not usuario_select.value:
+                    ui.notify(
+                        'Selecciona un usuario.',
+                        type='warning',
+                    )
+                    return
+
+
+                try:
+                    with Session(engine) as session:
+                        try:
+                            asignacion_service.asignar_usuario(
+                                session=session,
+                                orden_id=orden_select.value,
+                                usuario_id=usuario_select.value,
+                                tipo_asignacion=TipoAsignacion(
+                                    tipo_select.value
+                                ),
+                                asignado_por_id=usuario_actual_id,
+                            )
+                            session.commit()
+                        except Exception:
+                            session.rollback()
+                            raise
+
+                    ui.notify(
+                        'Asignación creada correctamente.',
+                        type='positive',
+                    )
+                    ui.navigate.reload()
+
+                except PermissionError as error:
+                    ui.notify(str(error), type='negative')
+                except ValueError as error:
+                    ui.notify(str(error), type='warning')
+                except Exception as error:
+                    ui.notify(
+                        f'No se pudo crear la asignación: {error}',
+                        type='negative',
+                    )
+
+
+            ui.button(
+                'Asignar',
+                on_click=asignar,
+                icon='person_add',
+            ).classes('w-full')
+
+
 
         with ui.card().classes('w-full'):
             ui.label('Asignaciones activas').classes(
                 'text-lg font-semibold'
             )
 
-            with Session(engine) as session:
-                asignaciones = session.exec(
-                    select(AsignacionOrden).where(
-                        AsignacionOrden.activa == True
-                    )
-                ).all()
+            tabla_asignaciones = ui.table(
+                columns=[
+                    {
+                        'name': 'orden',
+                        'label': 'Orden',
+                        'field': 'orden',
+                        'align': 'left',
+                    },
+                    {
+                        'name': 'cliente',
+                        'label': 'Cliente',
+                        'field': 'cliente',
+                        'align': 'left',
+                    },
+                    {
+                        'name': 'tipo',
+                        'label': 'Tipo',
+                        'field': 'tipo',
+                        'align': 'left',
+                    },
+                    {
+                        'name': 'usuario',
+                        'label': 'Usuario asignado',
+                        'field': 'usuario',
+                        'align': 'left',
+                    },
+                    {
+                        'name': 'etapa_asignada',
+                        'label': 'Etapa asignada',
+                        'field': 'etapa_asignada',
+                        'align': 'left',
+                    },
+                    {
+                        'name': 'etapa_actual',
+                        'label': 'Etapa actual',
+                        'field': 'etapa_actual',
+                        'align': 'left',
+                    },
+                ],
+                rows=[],
+                row_key='id',
+            ).classes('w-full')
 
-                filas = []
+            def actualizar_tabla_asignaciones():
+                with Session(engine) as session:
+                    asignaciones_actuales = session.exec(
+                        select(AsignacionOrden).where(
+                            AsignacionOrden.activa == True
+                        )
+                    ).all()
 
-                for asignacion in asignaciones:
-                    orden = session.get(
-                        OrdenVenta, asignacion.orden_id
-                    )
-                    usuario = session.get(
-                        Usuario, asignacion.usuario_id
-                    )
+                    filas_actualizadas = []
 
-                    filas.append({
-                        'orden': (
-                            orden.numero_ov
-                            if orden else 'Orden no disponible'
-                        ),
-                        'cliente': (
-                            orden.cliente
-                            if orden else ''
-                        ),
-                        'tipo': asignacion.tipo_asignacion.value,
-                        'usuario': (
-                            usuario.nombre
-                            if usuario else 'Usuario no disponible'
-                        ),
-                        'etapa': asignacion.etapa_asignacion.value,
-                    })
+                    for asignacion in asignaciones_actuales:
+                        orden = session.get(
+                            OrdenVenta,
+                            asignacion.orden_id,
+                        )
+                        usuario = session.get(
+                            Usuario,
+                            asignacion.usuario_id,
+                        )
 
-            if filas:
-                ui.table(
-                    columns=[
-                        {
-                            'name': 'orden',
-                            'label': 'Orden',
-                            'field': 'orden',
-                            'align': 'left',
-                        },
-                        {
-                            'name': 'cliente',
-                            'label': 'Cliente',
-                            'field': 'cliente',
-                            'align': 'left',
-                        },
-                        {
-                            'name': 'tipo',
-                            'label': 'Tipo',
-                            'field': 'tipo',
-                            'align': 'left',
-                        },
-                        {
-                            'name': 'usuario',
-                            'label': 'Usuario asignado',
-                            'field': 'usuario',
-                            'align': 'left',
-                        },
-                        {
-                            'name': 'etapa',
-                            'label': 'Etapa asignada',
-                            'field': 'etapa',
-                            'align': 'left',
-                        },
-                    ],
-                    rows=filas,
-                    row_key='orden',
-                ).classes('w-full')
-            else:
-                ui.label(
-                    'No hay asignaciones activas.'
-                ).classes('text-gray-500')
+                        filas_actualizadas.append({
+                            'id': asignacion.id,
+                            'orden': (
+                                orden.numero_ov
+                                if orden else 'Orden no disponible'
+                            ),
+                            'cliente': (
+                                orden.cliente if orden else ''
+                            ),
+                            'tipo': asignacion.tipo_asignacion.value,
+                            'usuario': (
+                                usuario.nombre
+                                if usuario else 'Usuario no disponible'
+                            ),
+                            'etapa_asignada': (
+                                asignacion.etapa_asignacion.value
+                            ),
+                            'etapa_actual': (
+                                orden.estado.value
+                                if orden else 'Orden no disponible'
+                            ),
+                        })
+
+                tabla_asignaciones.rows = filas_actualizadas
+                tabla_asignaciones.update()
+
+            actualizar_tabla_asignaciones()
+            ui.timer(5.0, actualizar_tabla_asignaciones)

@@ -5,6 +5,9 @@ from app.database import engine
 from app.models.orden import EstadoOrden
 from app.services.authorization_service import AuthorizationService
 from app.models.usuario import Usuario
+from app.repositories.asignacion_repository import AsignacionRepository
+from app.models.asignacion import TipoAsignacion
+
 
 def crear_tablero(
     tab_kanban,
@@ -20,6 +23,7 @@ def crear_tablero(
 ):
 
     authorization_service = AuthorizationService()
+    asignacion_repository = AsignacionRepository()
 
     with ui.tab_panel(tab_kanban):
 
@@ -97,12 +101,20 @@ def crear_tablero(
 
                         nueva = orden_service.crear_orden(
                             session=session,
+                            usuario_id=usuario.id,
                             numero_ov=num_ov,
                             cliente=cliente_nombre,
                             operador=usuario.rol.codigo,
                         )
 
                         id_creada = nueva.id
+
+                    except PermissionError as error:
+                        ui.notify(
+                            str(error),
+                            type='negative'
+                        )
+                        return
 
                     except ValueError as error:
                         ui.notify(
@@ -174,6 +186,7 @@ def crear_tablero(
                                     orden_actualizada = orden_service.actualizar_orden(
                                         session=s,
                                         orden_id=orden_id,
+                                        usuario_id=usuario_id,
                                         numero_ov=nuevo_num,
                                         cliente=nuevo_cli,
                                         operador=usuario.rol.codigo,
@@ -253,6 +266,7 @@ def crear_tablero(
                                     orden_actualizada = orden_service.agregar_comentario(
                                         session=s,
                                         orden_id=orden_id,
+                                        usuario_id=usuario_id,
                                         comentario=coment,
                                         operador=usuario.rol.codigo,
                                     )
@@ -314,7 +328,8 @@ def crear_tablero(
 
                     historial = orden_service.obtener_historial(
                         session,
-                        orden_id
+                        orden_id,
+                        usuario_id,
                     )
 
                     with ui.dialog() as dialog, ui.card().classes(
@@ -414,11 +429,35 @@ def crear_tablero(
                         on_change=filtrar_y_actualizar
                     ).classes('w-full').props('dense outlined clearable')
 
+
                 with ui.row().classes('items-center gap-2 flex-1 justify-end'):
-                    input_ov = ui.input(placeholder='Ej: OV-1001').classes('w-32').props('dense outlined')
-                    input_cliente = ui.input(placeholder='Cliente').classes('w-44').props('dense outlined')
-                    ui.button('Crear OV', icon='add', on_click=crear_nueva_ov)\
-                        .classes('bg-secondary text-white font-bold')
+                    with Session(engine) as session:
+                        usuario_actual = session.get(Usuario, usuario_id)
+
+                        mostrar_crear_ov = (
+                            usuario_actual is not None
+                            and usuario_actual.activo
+                            and usuario_actual.rol is not None
+                            and usuario_actual.rol.activo
+                            and usuario_actual.rol.codigo == 'ADMINISTRADOR'
+                        )
+
+                    if mostrar_crear_ov:
+                        input_ov = ui.input(
+                            placeholder='Ej: OV-1001'
+                        ).classes('w-32').props('dense outlined')
+
+                        input_cliente = ui.input(
+                            placeholder='Cliente'
+                        ).classes('w-44').props('dense outlined')
+
+                        ui.button(
+                            'Crear OV',
+                            icon='add',
+                            on_click=crear_nueva_ov,
+                        ).classes('bg-secondary text-white font-bold')
+
+
 
             # Renderizado de Columnas Kanban con Colores Personalizados
             def render_columnas():
@@ -435,6 +474,37 @@ def crear_tablero(
                         and usuario.rol is not None
                         and usuario.rol.activo
                     )
+
+
+                    if (
+                        usuario_autorizado
+                        and usuario.rol.codigo in ('OPERADOR', 'CHOFER')
+                    ):
+                        tipo_asignacion = (
+                            TipoAsignacion.OPERADOR
+                            if usuario.rol.codigo == 'OPERADOR'
+                            else TipoAsignacion.CHOFER
+                        )
+
+                        asignaciones_usuario = (
+                            asignacion_repository.obtener_activas_por_usuario(
+                                session,
+                                usuario_id,
+                                tipo_asignacion,
+                            )
+                        )
+
+                        ordenes_asignadas_ids = {
+                            asignacion.orden_id
+                            for asignacion in asignaciones_usuario
+                        }
+
+                        todas_ordenes = [
+                            orden
+                            for orden in todas_ordenes
+                            if orden.id in ordenes_asignadas_ids
+                        ]
+
 
                     puede_ver_historial = (
                         usuario_autorizado

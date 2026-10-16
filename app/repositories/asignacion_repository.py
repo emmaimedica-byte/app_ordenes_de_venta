@@ -24,6 +24,22 @@ class AsignacionRepository:
         ).first()
 
         return resultado is not None
+    
+    def tiene_asignacion_activa_por_orden_tipo(
+        self,
+        session: Session,
+        orden_id: int,
+        tipo_asignacion: TipoAsignacion,
+    ) -> bool:
+        resultado = session.exec(
+            select(AsignacionOrden).where(
+                AsignacionOrden.orden_id == orden_id,
+                AsignacionOrden.tipo_asignacion == tipo_asignacion,
+                AsignacionOrden.activa == True,
+            )
+        ).first()
+
+        return resultado is not None
 
     def obtener_activas_por_orden(
         self,

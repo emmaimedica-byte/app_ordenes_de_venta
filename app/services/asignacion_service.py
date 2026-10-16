@@ -73,14 +73,13 @@ class AsignacionService:
                 "El rol del usuario no corresponde al tipo de asignación."
             )
 
-        if self.asignacion_repository.tiene_asignacion(
+        if self.asignacion_repository.tiene_asignacion_activa_por_orden_tipo(
             session,
-            usuario_id,
             orden_id,
             tipo_asignacion,
         ):
             raise ValueError(
-                "El usuario ya tiene una asignación activa para esta orden."
+                f"La orden ya tiene un {tipo_asignacion.value.lower()} asignado."
             )
 
         asignacion = AsignacionOrden(

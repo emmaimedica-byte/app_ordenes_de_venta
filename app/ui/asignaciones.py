@@ -1,4 +1,3 @@
-
 from nicegui import ui, run
 from sqlmodel import Session, select
 
@@ -200,10 +199,77 @@ def crear_asignaciones(tab_asignaciones, usuario_actual_id):
                         'field': 'etapa_actual',
                         'align': 'left',
                     },
+                    {
+                        'name': 'acciones',
+                        'label': 'Acciones',
+                        'field': 'acciones',
+                        'align': 'center',
+                    },
                 ],
                 rows=[],
                 row_key='id',
             ).classes('w-full')
+
+            tabla_asignaciones.add_slot(
+                'body-cell-acciones',
+                r'''
+                <q-td :props="props">
+                    <q-btn
+                        flat
+                        round
+                        dense
+                        color="negative"
+                        icon="person_remove"
+                        @click="$parent.$emit('desasignar', props.row.id)"
+                    >
+                        <q-tooltip>Retirar asignación</q-tooltip>
+                    </q-btn>
+                </q-td>
+                ''',
+            )
+
+            tabla_asignaciones.on(
+                'desasignar',
+                lambda evento: desasignar(evento.args),
+            )
+
+            async def desasignar(asignacion_id: int):
+                respuesta = await ui.run_javascript(
+                    "confirm('¿Deseas retirar esta asignación?')",
+                    timeout=10.0,
+                )
+
+                if not respuesta:
+                    return
+
+                try:
+                    with Session(engine) as session:
+                        try:
+                            asignacion_service.desasignar_usuario(
+                                session=session,
+                                asignacion_id=asignacion_id,
+                                administrador_id=usuario_actual_id,
+                            )
+                            session.commit()
+                        except Exception:
+                            session.rollback()
+                            raise
+
+                    ui.notify(
+                        'Asignación retirada correctamente.',
+                        type='positive',
+                    )
+                    actualizar_tabla_asignaciones()
+
+                except PermissionError as error:
+                    ui.notify(str(error), type='negative')
+                except ValueError as error:
+                    ui.notify(str(error), type='warning')
+                except Exception as error:
+                    ui.notify(
+                        f'No se pudo retirar la asignación: {error}',
+                        type='negative',
+                    )
 
             def actualizar_tabla_asignaciones():
                 with Session(engine) as session:

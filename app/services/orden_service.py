@@ -172,7 +172,7 @@ class OrdenService:
             orden_id=nueva_orden.id,
             estado_anterior=None,
             estado_nuevo=nueva_orden.estado.value,
-            usuario_operador=operador,
+            usuario_operador_id=usuario.id,
             observaciones="Alta de Orden",
         )
 
@@ -255,7 +255,7 @@ class OrdenService:
             orden_id=orden.id,
             estado_anterior=None,
             estado_nuevo=orden.estado.value,
-            usuario_operador=operador,
+            usuario_operador_id=usuario.id,
             observaciones=observaciones,
         )
 
@@ -348,7 +348,7 @@ class OrdenService:
             orden_id=orden.id,
             estado_anterior=None,
             estado_nuevo=orden.estado.value,
-            usuario_operador=operador,
+            usuario_operador_id=usuario.id,
             observaciones=f"Comentario: {comentario}",
         )
 

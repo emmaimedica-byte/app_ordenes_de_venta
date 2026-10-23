@@ -17,6 +17,22 @@ class UsuarioRepository:
             select(Usuario)
             .where(Usuario.username == username_normalizado)
         ).first()
+    
+    def obtener_por_id(
+        self,
+        session: Session,
+        usuario_id: int,
+    ) -> Usuario | None:
+        return session.get(Usuario, usuario_id)
+    
+    def listar_todos(
+        self,
+        session: Session,
+    ) -> list[Usuario]:
+        return session.exec(
+            select(Usuario)
+            .order_by(Usuario.nombre)
+        ).all()
 
 
 
@@ -46,6 +62,17 @@ class UsuarioRepository:
         usuario: Usuario,
     ) -> Usuario:
 
+        session.add(usuario)
+        session.flush()
+        session.refresh(usuario)
+
+        return usuario
+    
+    def actualizar(
+        self,
+        session: Session,
+        usuario: Usuario,
+    ) -> Usuario:
         session.add(usuario)
         session.flush()
         session.refresh(usuario)

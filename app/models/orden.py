@@ -42,6 +42,12 @@ class HistorialOrden(SQLModel, table=True):
 # ----------------------------------------------------
 class OrdenVenta(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    sap_doc_entry: Optional[int] = Field(
+        default=None,
+        index=True,
+        unique=True,
+        nullable=True,
+    )
     numero_ov: str = Field(
         index=True,
         unique=True,

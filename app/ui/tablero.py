@@ -1,4 +1,5 @@
 from nicegui import ui
+from nicegui.events import UploadEventArguments
 from sqlmodel import Session
 
 from app.database import engine
@@ -7,6 +8,12 @@ from app.services.authorization_service import AuthorizationService
 from app.models.usuario import Usuario
 from app.repositories.asignacion_repository import AsignacionRepository
 from app.models.asignacion import TipoAsignacion
+import base64
+
+from app.services.imagen_service import (
+    ImagenService,
+    DIRECTORIO_IMAGENES,
+)
 
 
 def crear_tablero(
@@ -15,6 +22,7 @@ def crear_tablero(
     version_cliente_tablero,
     estado_global,
     orden_service,
+    sap_service,
     orden_repository,
     notificar_cambio_global,
     estados_config,
@@ -24,6 +32,7 @@ def crear_tablero(
 
     authorization_service = AuthorizationService()
     asignacion_repository = AsignacionRepository()
+    imagen_service = ImagenService()
 
     with ui.tab_panel(tab_kanban):
 
@@ -133,6 +142,168 @@ def crear_tablero(
 
                 notificar_cambio_global(id_creada)
                 refrescar_tablero()
+            
+            
+            def importar_orden_sap(orden_sap: dict, dialog):
+                try:
+                    with Session(engine) as session:
+                        nueva = orden_service.importar_orden_sap(
+                            session=session,
+                            usuario_id=usuario_id,
+                            sap_doc_entry=int(orden_sap["DocEntry"]),
+                            numero_ov=str(orden_sap["DocNum"]),
+                            cliente=str(orden_sap["CardName"] or ""),
+                        )
+
+                        orden_id = nueva.id
+                        numero_ov = nueva.numero_ov
+
+                    dialog.close()
+
+                    ui.notify(
+                        f"OV {numero_ov} importada al tablero correctamente.",
+                        type="positive",
+                    )
+                    notificar_cambio_global(orden_id)
+                    refrescar_tablero()
+
+                except PermissionError as error:
+                    ui.notify(str(error), type="negative")
+
+                except ValueError as error:
+                    ui.notify(str(error), type="warning")
+
+                except Exception as error:
+                    print(f"Error al importar OV desde SAP: {error}")
+                    ui.notify(
+                        "No se pudo importar la orden. Revisa los registros del servidor.",
+                        type="negative",
+                    )
+
+
+            def abrir_modal_sap():
+                with Session(engine) as session:
+                    usuario = session.get(Usuario, usuario_id)
+
+                    if (
+                        usuario is None
+                        or not usuario.activo
+                        or usuario.rol is None
+                        or not usuario.rol.activo
+                        or not authorization_service.tiene_permiso(
+                            session,
+                            usuario,
+                            "orden.crear",
+                        )
+                    ):
+                        ui.notify(
+                            "No tienes permiso para importar órdenes de SAP.",
+                            type="negative",
+                        )
+                        return
+
+                
+                try:
+                    with Session(engine) as session:
+                        ordenes_sap = sap_service.obtener_ordenes_abiertas(
+                            session=session,
+                            limite=100,
+                        )
+                except Exception as error:
+                    print(f"Error al consultar órdenes de SAP: {error}")
+                    ui.notify(
+                        "No fue posible consultar SAP HANA. Revisa los registros del servidor.",
+                        type="negative",
+                    )
+                    return
+
+
+                with ui.dialog() as dialog, ui.card().classes(
+                    "w-full max-w-3xl p-6"
+                ):
+                    ui.label("Órdenes abiertas de SAP").classes(
+                        "text-xl font-bold"
+                    )
+                    ui.label(
+                        f"Se encontraron {len(ordenes_sap)} órdenes abiertas."
+                    ).classes("text-sm text-gray-500")
+
+                    buscador_sap = ui.input(
+                        placeholder="Buscar por OV, cliente o DocEntry..."
+                    ).props("outlined dense clearable").classes("w-full")
+
+                    @ui.refreshable
+                    def mostrar_ordenes_sap():
+                        filtro = (
+                            buscador_sap.value or ""
+                        ).strip().casefold()
+
+                        ordenes_filtradas = [
+                            orden
+                            for orden in ordenes_sap
+                            if (
+                                filtro in str(orden["DocNum"]).casefold()
+                                or filtro in str(
+                                    orden["CardName"] or ""
+                                ).casefold()
+                                or filtro in str(
+                                    orden["DocEntry"]
+                                ).casefold()
+                            )
+                        ]
+
+                        if not ordenes_filtradas:
+                            mensaje = (
+                                "No hay órdenes abiertas disponibles."
+                                if not ordenes_sap
+                                else "No hay órdenes que coincidan con la búsqueda."
+                            )
+                            ui.label(mensaje).classes("py-4 text-gray-500")
+                            return
+
+                        with ui.scroll_area().classes("w-full").style(
+                            "max-height: 60vh"
+                        ):
+                            for orden_sap in ordenes_filtradas:
+                                with ui.row().classes(
+                                    "w-full items-center justify-between "
+                                    "border-b py-3 gap-4"
+                                ):
+                                    with ui.column().classes("gap-1 flex-1"):
+                                        ui.label(
+                                            f"OV {orden_sap['DocNum']}"
+                                        ).classes("font-bold")
+
+                                        ui.label(
+                                            orden_sap["CardName"] or "Sin cliente"
+                                        ).classes("text-sm")
+
+                                        ui.label(
+                                            f"DocEntry SAP: {orden_sap['DocEntry']}"
+                                        ).classes("text-xs text-gray-500")
+
+                                    ui.button(
+                                        "Agregar al tablero",
+                                        icon="add",
+                                        on_click=lambda orden=orden_sap: (
+                                            importar_orden_sap(orden, dialog)
+                                        ),
+                                    ).props("no-caps")
+
+                    mostrar_ordenes_sap()
+
+                    buscador_sap.on_value_change(
+                        lambda _: mostrar_ordenes_sap.refresh()
+                    )
+
+                    with ui.row().classes("w-full justify-end mt-4"):
+                        ui.button(
+                            "Cerrar",
+                            on_click=dialog.close,
+                        ).props("flat")
+
+                dialog.open()
+
 
             # MODALES (EDITAR, COMENTAR, HISTORIAL)
             def ver_editar_modal(orden_id: int):
@@ -231,16 +402,66 @@ def crear_tablero(
                         input_operador = ui.input('Tu Nombre / Usuario', value='Operador').classes('w-full').props('outlined dense')
                         input_comentario = ui.textarea('Escribe tu comentario u observación...').classes('w-full mt-2').props('outlined dense')
 
+                        imagen_pendiente = {
+                            'contenido': None,
+                            'nombre': None,
+                        }
+
+                        async def preparar_imagen(e: UploadEventArguments):
+                            try:
+                                contenido = await e.file.read()
+
+                                if not contenido:
+                                    ui.notify(
+                                        'El archivo está vacío.',
+                                        type='negative',
+                                    )
+                                    return
+
+                                if len(contenido) > 10 * 1024 * 1024:
+                                    ui.notify(
+                                        'La imagen no puede superar los 10 MB.',
+                                        type='negative',
+                                    )
+                                    return
+
+                                imagen_pendiente['contenido'] = contenido
+                                imagen_pendiente['nombre'] = e.file.name
+
+                                ui.notify(
+                                    f'Imagen preparada: {e.file.name}',
+                                    type='positive',
+                                )
+
+                            except Exception:
+                                ui.notify(
+                                    'No fue posible preparar la imagen.',
+                                    type='negative',
+                                )
+                                raise
+
+
+                        upload_imagen = ui.upload(
+                            label='Adjuntar imagen',
+                            auto_upload=True,
+                            max_file_size=10 * 1024 * 1024,
+                            on_upload=preparar_imagen,
+                        ).props(
+                            'accept="image/jpeg,image/png,image/webp"'
+                        ).classes('w-full mt-2')
+
 
                         def guardar_comentario():
                             coment = input_comentario.value.strip()
 
-                            if not coment:
+                            if not coment and not imagen_pendiente['contenido']:
                                 ui.notify(
-                                    'Escribe un comentario antes de guardar',
-                                    type='warning'
+                                    'Escribe un comentario o adjunta una imagen.',
+                                    type='warning',
                                 )
                                 return
+                            
+                            imagen_guardada = True
 
                             with Session(engine) as s:
                                 try:
@@ -263,13 +484,16 @@ def crear_tablero(
                                         )
                                         return
 
-                                    orden_actualizada = orden_service.agregar_comentario(
-                                        session=s,
-                                        orden_id=orden_id,
-                                        usuario_id=usuario_id,
-                                        comentario=coment,
-                                        operador=usuario.rol.codigo,
-                                    )
+                                    orden_actualizada = None
+
+                                    if coment:
+                                        orden_actualizada = orden_service.agregar_comentario(
+                                            session=s,
+                                            orden_id=orden_id,
+                                            usuario_id=usuario_id,
+                                            comentario=coment,
+                                            operador=usuario.rol.codigo,
+                                        )
 
                                 except ValueError as error:
                                     ui.notify(
@@ -277,14 +501,46 @@ def crear_tablero(
                                         type='negative'
                                     )
                                     return
+                                
+                                if imagen_pendiente['contenido']:
+                                    try:
+                                        imagen_service.guardar_imagen(
+                                            session=s,
+                                            orden_id=orden_id,
+                                            usuario_id=usuario_id,
+                                            contenido=imagen_pendiente['contenido'],
+                                            nombre_original=imagen_pendiente['nombre'],
+                                            descripcion=coment or None,
+                                        )
+                                    except ValueError as error:
+                                        imagen_guardada = False
+                                        ui.notify(
+                                            f'El comentario se guardó, pero la imagen no: {error}',
+                                            type='negative',
+                                        )
+  
+                            if imagen_guardada:
+                                if coment and imagen_pendiente['contenido']:
+                                    mensaje = '💬 Comentario e imagen guardados'
+                                elif coment:
+                                    mensaje = '💬 Comentario añadido al historial'
+                                else:
+                                    mensaje = '🖼️ Imagen guardada correctamente'
 
-                            ui.notify(
-                                '💬 Comentario añadido al historial',
-                                type='positive'
-                            )
+                                ui.notify(mensaje, type='positive')
+                            else:
+                                ui.notify(
+                                    'Comentario guardado; la imagen no pudo guardarse.',
+                                    type='warning',
+                                )
+
 
                             dialog.close()
-                            notificar_cambio_global(orden_actualizada.id)
+
+                            if orden_actualizada:
+                                notificar_cambio_global(orden_actualizada.id)
+                            else:
+                                notificar_cambio_global(orden_id)
 
 
                         with ui.row().classes('w-full justify-end gap-2 mt-4'):
@@ -412,6 +668,138 @@ def crear_tablero(
                         )
 
                     dialog.open()
+            
+            def ver_imagenes_modal(orden_id: int):
+                try:
+                    with Session(engine) as session:
+                        imagenes = imagen_service.obtener_por_orden(
+                            session=session,
+                            orden_id=orden_id,
+                            usuario_id=usuario_id,
+                        )
+
+                        orden = orden_repository.obtener_por_id(
+                            session,
+                            orden_id,
+                        )
+
+                        if not orden:
+                            ui.notify(
+                                'No se encontró la orden.',
+                                type='warning',
+                            )
+                            return
+
+                        numero_ov = orden.numero_ov
+                        evidencias = []
+
+                        directorio_base = (
+                            DIRECTORIO_IMAGENES / str(orden_id)
+                        ).resolve()
+
+                        for imagen in imagenes:
+                            ruta = (
+                                directorio_base / imagen.nombre_archivo
+                            ).resolve()
+
+                            # Evitar que una ruta manipulada salga
+                            # del directorio de la orden.
+                            if (
+                                not ruta.is_relative_to(directorio_base)
+                                or not ruta.is_file()
+                            ):
+                                evidencias.append({
+                                    'nombre': imagen.nombre_archivo,
+                                    'descripcion': imagen.descripcion,
+                                    'fecha': imagen.fecha_registro,
+                                    'url': None,
+                                })
+                                continue
+
+                            extension = ruta.suffix.lower()
+                            mime = {
+                                '.jpg': 'image/jpeg',
+                                '.jpeg': 'image/jpeg',
+                                '.png': 'image/png',
+                                '.webp': 'image/webp',
+                            }.get(extension)
+
+                            if not mime:
+                                continue
+
+                            contenido = base64.b64encode(
+                                ruta.read_bytes()
+                            ).decode('ascii')
+
+                            evidencias.append({
+                                'nombre': imagen.nombre_archivo,
+                                'descripcion': imagen.descripcion,
+                                'fecha': imagen.fecha_registro,
+                                'url': f'data:{mime};base64,{contenido}',
+                            })
+
+                    with ui.dialog() as dialog, ui.card().classes(
+                        'w-full max-w-3xl p-5'
+                    ):
+                        ui.label(
+                            f'📷 Evidencias de la OV {numero_ov}'
+                        ).classes('text-lg font-bold text-blue-900')
+
+                        if not evidencias:
+                            ui.label(
+                                'Esta orden todavía no tiene evidencias.'
+                            ).classes('text-sm text-gray-500 py-4')
+
+                        else:
+                            with ui.column().classes(
+                                'w-full max-h-[70vh] overflow-y-auto gap-4'
+                            ):
+                                for evidencia in evidencias:
+                                    with ui.card().classes(
+                                        'w-full shadow-none border'
+                                    ):
+                                        if evidencia['url']:
+                                            ui.image(
+                                                evidencia['url']
+                                            ).classes(
+                                                'w-full max-h-96 object-contain'
+                                            )
+                                        else:
+                                            ui.label(
+                                                'No se puede mostrar el archivo: '
+                                                f"{evidencia['nombre']}"
+                                            ).classes('text-red-600')
+
+                                        if evidencia['descripcion']:
+                                            ui.label(
+                                                evidencia['descripcion']
+                                            ).classes('text-sm')
+
+                                        ui.label(
+                                            evidencia['fecha'].strftime(
+                                                '%d/%m/%Y %H:%M:%S'
+                                            )
+                                        ).classes(
+                                            'text-xs text-gray-500'
+                                        )
+
+                        ui.button(
+                            'Cerrar',
+                            on_click=dialog.close,
+                        ).classes('self-end bg-gray-500 text-white')
+
+                    dialog.open()
+
+                except (PermissionError, ValueError) as error:
+                    ui.notify(str(error), type='negative')
+
+                except Exception:
+                    ui.notify(
+                        'No fue posible consultar las evidencias.',
+                        type='negative',
+                    )
+                    raise
+                
 
 
             # Panel Superior
@@ -456,6 +844,12 @@ def crear_tablero(
                             icon='add',
                             on_click=crear_nueva_ov,
                         ).classes('bg-secondary text-white font-bold')
+
+                        ui.button(
+                            'Órdenes de SAP',
+                            icon='cloud_download',
+                            on_click=abrir_modal_sap,
+                        ).classes('bg-blue-700 text-white font-bold')
 
 
 
@@ -527,6 +921,17 @@ def crear_tablero(
                         )
                     )
 
+                    puede_ver_imagenes = (
+                        usuario_autorizado
+                        and authorization_service.tiene_permiso(
+                            session,
+                            usuario,
+                            'orden.ver',
+                        )
+                    )
+
+                    
+
                     estados_orden = [
                         configuracion[0]
                         for configuracion in estados_config
@@ -569,7 +974,7 @@ def crear_tablero(
                         if query in (o.numero_ov or '').lower() or query in (o.cliente or '').lower()
                     ]
 
-                with ui.row().classes('w-full overflow-x-auto gap-4 p-2 items-start'):
+                with ui.row().classes('w-full overflow-x-auto gap-4 p-2 items-start justify-center'):
                     for estado, titulo, icono, color_icon, bg_header, border_card, badge_col in estados_config:
                         ordenes_etapa = [o for o in todas_ordenes if o.estado == estado]
 
@@ -621,6 +1026,14 @@ def crear_tablero(
                                                     ).props(
                                                         'flat round dense color=amber-7'
                                                     ).tooltip('Editar orden')
+
+                                                if puede_ver_imagenes:
+                                                    ui.button(
+                                                        icon='image',
+                                                        on_click=lambda o_id=orden.id: ver_imagenes_modal(o_id)
+                                                    ).props(
+                                                        'flat round dense color=purple-6'
+                                                    ).tooltip('Ver evidencias fotográficas')
 
                                         ui.label(f'👤 {orden.cliente}').classes('text-xs text-gray-600 mb-2')
 

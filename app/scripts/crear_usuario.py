@@ -66,14 +66,13 @@ def crear_usuario():
         with Session(engine) as session:
             usuario_service = UsuarioService()
 
-            usuario = usuario_service.crear_usuario(
+            usuario = usuario_service.crear_usuario_inicial(
                 session=session,
                 username=username,
                 nombre=nombre,
                 password=password,
                 rol_codigo=rol_codigo,
                 departamento=departamento,
-                creado_por_id=None,
             )
 
             session.commit()
@@ -85,7 +84,7 @@ def crear_usuario():
             print(f"Rol: {nombre_rol}")
             print(f"Departamento: {usuario.departamento.value}")
 
-    except ValueError as error:
+    except (ValueError, PermissionError) as error:
         print(f"\nError: {error}")
 
 

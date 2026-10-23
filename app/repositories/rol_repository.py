@@ -11,3 +11,10 @@ class RolRepository:
             select(Rol)
             .where(Rol.codigo == codigo_normalizado)
         ).first()
+    
+    def listar_activos(self, session: Session) -> list[Rol]:
+        return session.exec(
+            select(Rol)
+            .where(Rol.activo == True)
+            .order_by(Rol.nombre)
+        ).all()

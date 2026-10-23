@@ -22,3 +22,9 @@ __pycache__/
 
 # Datos locales de NiceGUI
 .nicegui/
+
+# Archivos subidos por la aplicación (datos locales)
+uploads/
+
+# Pruebas locales de desarrollo
+/test/

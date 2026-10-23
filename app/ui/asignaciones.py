@@ -53,6 +53,11 @@ def crear_asignaciones(tab_asignaciones, usuario_actual_id):
                 for usuario in choferes
             }
 
+            opciones_operadores_actuales = opciones_operadores.copy()
+            opciones_choferes_actuales = opciones_choferes.copy()
+        
+        ordenes_disponibles = {'items': ordenes}
+
         if not opciones_ordenes:
             ui.label('No hay órdenes registradas.').classes(
                 'text-orange-700'
@@ -63,10 +68,115 @@ def crear_asignaciones(tab_asignaciones, usuario_actual_id):
                 'text-lg font-semibold'
             )
 
-            orden_select = ui.select(
-                opciones_ordenes,
-                label='Orden de venta',
+            
+            orden_seleccionada = {
+                'id': None,
+                'texto': '',
+            }
+
+            etiqueta_orden = ui.label(
+                'Ninguna orden seleccionada'
+            ).classes('text-sm text-gray-600')
+
+            def seleccionar_orden(orden):
+                orden_seleccionada['id'] = orden.id
+                orden_seleccionada['texto'] = (
+                    f'{orden.numero_ov} | {orden.cliente}'
+                )
+                etiqueta_orden.text = (
+                    f'OV seleccionada: {orden_seleccionada["texto"]}'
+                )
+                dialog_orden.close()
+
+            
+            def actualizar_ordenes_disponibles():
+                with Session(engine) as session:
+                    ordenes_actualizadas = (
+                        orden_repository.obtener_todas(session)
+                    )
+
+                ordenes_disponibles['items'] = ordenes_actualizadas
+
+            def filtrar_ordenes():
+                termino = (busqueda_ov.value or '').strip().casefold()
+                resultados_ov.clear()
+
+                with resultados_ov:
+                    encontradas = [
+                        orden
+                        for orden in ordenes_disponibles['items']
+                        if termino in str(orden.numero_ov).casefold()
+                        or termino in str(orden.cliente).casefold()
+                    ]
+
+                    if not encontradas:
+                        ui.label(
+                            'No se encontraron órdenes.'
+                        ).classes('text-gray-500 py-3')
+
+                    for orden in encontradas:
+                        ui.button(
+                            f'{orden.numero_ov} | {orden.cliente}',
+                            on_click=lambda o=orden: seleccionar_orden(o),
+                        ).props('flat no-caps').classes('w-full justify-start')
+
+
+            with ui.dialog() as dialog_orden, ui.card().classes(
+                'w-full max-w-2xl'
+            ):
+                ui.label('Buscar orden de venta').classes(
+                    'text-xl font-bold'
+                )
+
+                busqueda_ov = ui.input(
+                    label='Buscar por OV o cliente',
+                    placeholder='Escribe el número de OV o el cliente',
+                ).classes('w-full')
+                
+                def limpiar_busqueda_orden():
+                    busqueda_ov.value = ''
+                    busqueda_ov.update()
+                    filtrar_ordenes()
+
+                dialog_orden.on('hide', limpiar_busqueda_orden)
+
+
+                busqueda_ov.on(
+                    'update:model-value',
+                    lambda _: filtrar_ordenes(),
+                )
+
+                with ui.scroll_area().classes('w-full').style(
+                    'max-height: 50vh'
+                ):
+                    resultados_ov = ui.column().classes('w-full gap-1')
+
+                
+                def cerrar_dialogo_orden():
+                    busqueda_ov.value = ''
+                    busqueda_ov.update()
+                    filtrar_ordenes()
+                    dialog_orden.close()
+
+                ui.button(
+                    'Cerrar',
+                    on_click=cerrar_dialogo_orden,
+                ).props('flat')
+
+
+            
+            def abrir_busqueda_orden():
+                actualizar_ordenes_disponibles()
+                filtrar_ordenes()
+                dialog_orden.open()
+
+            ui.button(
+                'Buscar orden de venta',
+                icon='search',
+                on_click=abrir_busqueda_orden,
             ).classes('w-full')
+
+
 
             tipo_select = ui.select(
                 {
@@ -84,22 +194,18 @@ def crear_asignaciones(tab_asignaciones, usuario_actual_id):
 
             def actualizar_usuarios():
                 if tipo_select.value == TipoAsignacion.CHOFER.value:
-                    usuario_select.options = opciones_choferes
+                    usuario_select.options = opciones_choferes_actuales
                     usuario_select.label = 'Chofer'
                 else:
-                    usuario_select.options = opciones_operadores
+                    usuario_select.options = opciones_operadores_actuales
                     usuario_select.label = 'Operador'
 
                 usuario_select.value = None
                 usuario_select.update()
 
-            tipo_select.on_value_change(
-                lambda _: actualizar_usuarios()
-            )
-
 
             def asignar():
-                if not orden_select.value:
+                if not orden_seleccionada['id']:
                     ui.notify(
                         'Selecciona una orden de venta.',
                         type='warning',
@@ -119,7 +225,7 @@ def crear_asignaciones(tab_asignaciones, usuario_actual_id):
                         try:
                             asignacion_service.asignar_usuario(
                                 session=session,
-                                orden_id=orden_select.value,
+                                orden_id=orden_seleccionada['id'],
                                 usuario_id=usuario_select.value,
                                 tipo_asignacion=TipoAsignacion(
                                     tipo_select.value
@@ -271,51 +377,100 @@ def crear_asignaciones(tab_asignaciones, usuario_actual_id):
                         type='negative',
                     )
 
-            def actualizar_tabla_asignaciones():
-                with Session(engine) as session:
-                    asignaciones_actuales = session.exec(
-                        select(AsignacionOrden).where(
-                            AsignacionOrden.activa == True
-                        )
-                    ).all()
+            
+        def actualizar_tabla_asignaciones():
+            with Session(engine) as session:
+                asignaciones_actuales = session.exec(
+                    select(AsignacionOrden).where(
+                        AsignacionOrden.activa == True
+                    )
+                ).all()
 
-                    filas_actualizadas = []
+                filas_actualizadas = []
 
-                    for asignacion in asignaciones_actuales:
-                        orden = session.get(
-                            OrdenVenta,
-                            asignacion.orden_id,
-                        )
-                        usuario = session.get(
-                            Usuario,
-                            asignacion.usuario_id,
-                        )
+                for asignacion in asignaciones_actuales:
+                    orden = session.get(
+                        OrdenVenta,
+                        asignacion.orden_id,
+                    )
+                    usuario = session.get(
+                        Usuario,
+                        asignacion.usuario_id,
+                    )
 
-                        filas_actualizadas.append({
-                            'id': asignacion.id,
-                            'orden': (
-                                orden.numero_ov
-                                if orden else 'Orden no disponible'
-                            ),
-                            'cliente': (
-                                orden.cliente if orden else ''
-                            ),
-                            'tipo': asignacion.tipo_asignacion.value,
-                            'usuario': (
-                                usuario.nombre
-                                if usuario else 'Usuario no disponible'
-                            ),
-                            'etapa_asignada': (
-                                asignacion.etapa_asignacion.value
-                            ),
-                            'etapa_actual': (
-                                orden.estado.value
-                                if orden else 'Orden no disponible'
-                            ),
-                        })
+                    if usuario is None or not usuario.activo:
+                        continue
 
-                tabla_asignaciones.rows = filas_actualizadas
-                tabla_asignaciones.update()
+                    filas_actualizadas.append({
+                        'id': asignacion.id,
+                        'orden': (
+                            orden.numero_ov
+                            if orden else 'Orden no disponible'
+                        ),
+                        'cliente': (
+                            orden.cliente if orden else ''
+                        ),
+                        'tipo': asignacion.tipo_asignacion.value,
+                        'usuario': usuario.nombre,
+                        'etapa_asignada': (
+                            asignacion.etapa_asignacion.value
+                        ),
+                        'etapa_actual': (
+                            orden.estado.value
+                            if orden else 'Orden no disponible'
+                        ),
+                    })
 
-            actualizar_tabla_asignaciones()
-            ui.timer(5.0, actualizar_tabla_asignaciones)
+            tabla_asignaciones.rows = filas_actualizadas
+            tabla_asignaciones.update()
+
+        def actualizar_selector_usuarios():
+            with Session(engine) as session:
+                operadores_actuales = (
+                    usuario_repository.obtener_activos_por_rol(
+                        session,
+                        'OPERADOR',
+                    )
+                )
+                choferes_actuales = (
+                    usuario_repository.obtener_activos_por_rol(
+                        session,
+                        'CHOFER',
+                    )
+                )
+
+                # Actualizar los diccionarios compartidos.
+                opciones_operadores_actuales.clear()
+                opciones_operadores_actuales.update({
+                    usuario.id: usuario.nombre
+                    for usuario in operadores_actuales
+                })
+
+                opciones_choferes_actuales.clear()
+                opciones_choferes_actuales.update({
+                    usuario.id: usuario.nombre
+                    for usuario in choferes_actuales
+                })
+
+            # Mostrar las opciones del tipo seleccionado.
+            if tipo_select.value == TipoAsignacion.CHOFER.value:
+                opciones_actuales = opciones_choferes_actuales
+                usuario_select.label = 'Chofer'
+            else:
+                opciones_actuales = opciones_operadores_actuales
+                usuario_select.label = 'Operador'
+
+            usuario_select.options = opciones_actuales
+
+            # Deseleccionar únicamente si el usuario ya no está disponible.
+            if usuario_select.value not in opciones_actuales:
+                usuario_select.value = None
+
+            usuario_select.update()
+
+        # Carga inicial y actualización periódica independiente.
+        actualizar_tabla_asignaciones()
+        actualizar_selector_usuarios()
+
+        ui.timer(5.0, actualizar_tabla_asignaciones)
+        ui.timer(5.0, actualizar_selector_usuarios)

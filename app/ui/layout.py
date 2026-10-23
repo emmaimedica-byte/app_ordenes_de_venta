@@ -1,4 +1,4 @@
-from nicegui import ui
+from nicegui import app,ui
 
 
 def crear_layout(
@@ -44,32 +44,77 @@ def crear_layout(
                 'text-xs opacity-80 bg-blue-900 px-3 py-1 rounded-full hidden md:block'
             )
 
-    # Pestañas
-    with ui.tabs().classes('w-full bg-blue-50 border-b') as tabs:
+    
+    # Identificadores estables para recordar la pestaña activa
+    pestana_guardada = app.storage.user.get(
+        'pestana_activa',
+        'tablero',
+    )
+
+    nombres_validos = {'tablero', 'handheld', 'dashboard'}
+
+    if usuario_rol == 'ADMINISTRADOR':
+        nombres_validos.update({'asignaciones', 'usuarios'})
+
+    if pestana_guardada not in nombres_validos:
+        pestana_guardada = 'tablero'
+
+    def guardar_pestana(event):
+        valor = event.value
+
+        if isinstance(valor, str) and valor in nombres_validos:
+            app.storage.user['pestana_activa'] = valor
+
+    with ui.tabs(
+        value=pestana_guardada,
+        on_change=guardar_pestana,
+    ).classes('w-full bg-blue-50 border-b') as tabs:
         tab_kanban = ui.tab(
-            'Tablero General',
+            'tablero',
+            label='Tablero General',
             icon='dashboard',
         )
         tab_handheld = ui.tab(
-            'Modo Handheld / Escáner',
+            'handheld',
+            label='Modo Handheld / Escáner',
             icon='qr_code_scanner',
         )
         tab_metrics = ui.tab(
-            'Dashboard & KPIs',
+            'dashboard',
+            label='Dashboard & KPIs',
             icon='analytics',
         )
 
         tab_asignaciones = None
+        tab_usuarios = None
 
         if usuario_rol == 'ADMINISTRADOR':
             tab_asignaciones = ui.tab(
-                'Administración de Asignaciones',
+                'asignaciones',
+                label='Administración de Asignaciones',
                 icon='assignment_ind',
             )
+            tab_usuarios = ui.tab(
+                'usuarios',
+                label='Administración de Usuarios',
+                icon='manage_accounts',
+            )
+
+    pestanas = {
+        'tablero': tab_kanban,
+        'handheld': tab_handheld,
+        'dashboard': tab_metrics,
+    }
+
+    if tab_asignaciones is not None:
+        pestanas['asignaciones'] = tab_asignaciones
+
+    if tab_usuarios is not None:
+        pestanas['usuarios'] = tab_usuarios
 
     tab_panels = ui.tab_panels(
         tabs,
-        value=tab_kanban,
+        value=pestanas[pestana_guardada],
     ).classes('w-full bg-slate-50 p-2')
 
     return (
@@ -78,4 +123,6 @@ def crear_layout(
         tab_handheld,
         tab_metrics,
         tab_asignaciones,
+        tab_usuarios,
     )
+

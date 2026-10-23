@@ -8,19 +8,23 @@ from nicegui import app as nicegui_app, ui
 from app.database import create_db_and_tables, engine
 from app.models.orden import OrdenVenta, EstadoOrden, HistorialOrden
 
+
 from app.repositories.orden_repository import OrdenRepository
 from app.services.orden_service import OrdenService
-
+from app.services.sap_service import SAPService
 from app.services.dashboard_service import DashboardService
+from app.services.imagen_service import ImagenService
 
 from app.services.auth_service import AuthService
 from app.models.usuario import Usuario
+from app.models.imagen import ImagenOrden
 
 from app.ui.layout import crear_layout
 from app.ui.tablero import crear_tablero
 from app.ui.handheld import crear_handheld
 from app.ui.dashboard import crear_dashboard
 from app.ui.asignaciones import crear_asignaciones
+from app.ui.usuarios import crear_usuarios
 
 # ----------------------------------------------------
 #  CONTROL DE ESTADO GLOBAL PARA TIEMPO REAL
@@ -52,9 +56,10 @@ app.mount(
 
 orden_repository = OrdenRepository()
 orden_service = OrdenService(orden_repository)
-
+sap_service = SAPService(orden_repository)
 dashboard_service = DashboardService()
 auth_service = AuthService()
+imagen_service = ImagenService()
 
 
 
@@ -173,12 +178,13 @@ def main_page():
     version_cliente_tablero = {'ultima_vista': None}
     version_cliente_metrics = {'ultima_vista': None}
 
-    tab_panels, tab_kanban, tab_handheld, tab_metrics, tab_asignaciones = crear_layout(
+    tab_panels, tab_kanban, tab_handheld, tab_metrics, tab_asignaciones, tab_usuarios = crear_layout(
         usuario_nombre=usuario_nombre,
         cerrar_sesion=cerrar_sesion,
         usuario_rol=usuario.rol.codigo,
     )
 
+    
     with tab_panels:
         crear_tablero(
             tab_kanban=tab_kanban,
@@ -186,6 +192,7 @@ def main_page():
             version_cliente_tablero=version_cliente_tablero,
             estado_global=estado_global,
             orden_service=orden_service,
+            sap_service=sap_service,
             orden_repository=orden_repository,
             notificar_cambio_global=notificar_cambio_global,
             estados_config=ESTADOS_CONFIG,
@@ -199,6 +206,8 @@ def main_page():
             orden_repository=orden_repository,
             notificar_cambio_global=notificar_cambio_global,
             estados_config=ESTADOS_CONFIG,
+            imagen_service=imagen_service,
+            usuario_id=usuario.id,
         )
 
         crear_dashboard(
@@ -210,12 +219,18 @@ def main_page():
             estados_config=ESTADOS_CONFIG,
         )
 
-
         if tab_asignaciones is not None:
             crear_asignaciones(
                 tab_asignaciones=tab_asignaciones,
                 usuario_actual_id=usuario.id,
             )
+
+        if tab_usuarios is not None:
+            crear_usuarios(
+                tab_usuarios=tab_usuarios,
+                usuario_actual_id=usuario.id,
+            )
+
 
 
 

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.models.orden import (
     EstadoOrden,
@@ -493,3 +493,101 @@ class OrdenService:
         session.refresh(orden)
 
         return orden
+    
+
+    
+    def importar_orden_sap(
+        self,
+        session: Session,
+        usuario_id: int,
+        sap_doc_entry: int,
+        numero_ov: str,
+        cliente: str,
+    ) -> OrdenVenta:
+
+        usuario = session.get(Usuario, usuario_id)
+
+        if (
+            usuario is None
+            or not usuario.activo
+            or usuario.rol is None
+            or not usuario.rol.activo
+        ):
+            raise PermissionError(
+                "El usuario no está activo o no tiene un rol activo"
+            )
+
+        if not self.authorization_service.tiene_permiso(
+            session,
+            usuario,
+            "orden.crear",
+        ):
+            raise PermissionError(
+                "El usuario no tiene permiso para importar órdenes"
+            )
+
+        if sap_doc_entry <= 0:
+            raise ValueError("El identificador de SAP no es válido")
+
+        numero_ov = str(numero_ov).strip()
+        cliente = str(cliente).strip()
+
+        if not numero_ov:
+            raise ValueError("El número de OV no puede estar vacío")
+
+        existente_sap = session.exec(
+            select(OrdenVenta).where(
+                OrdenVenta.sap_doc_entry == sap_doc_entry
+            )
+        ).first()
+
+        if existente_sap:
+            raise ValueError(
+                f"La OV de SAP {numero_ov} ya está en el tablero"
+            )
+
+        existente_numero = self.repository.obtener_por_numero(
+            session,
+            numero_ov,
+        )
+
+        if existente_numero:
+            raise ValueError(
+                f"La OV {numero_ov} ya existe en el tablero"
+            )
+
+        nueva_orden = OrdenVenta(
+            sap_doc_entry=sap_doc_entry,
+            numero_ov=numero_ov,
+            cliente=cliente or "Cliente General",
+        )
+
+        try:
+            nueva_orden = self.repository.crear(
+                session,
+                nueva_orden,
+            )
+
+            historial = HistorialOrden(
+                orden_id=nueva_orden.id,
+                estado_anterior=None,
+                estado_nuevo=nueva_orden.estado.value,
+                usuario_operador_id=usuario.id,
+                observaciones=(
+                    f"Alta desde SAP HANA. DocEntry={sap_doc_entry}"
+                ),
+            )
+
+            self.repository.agregar_historial(
+                session,
+                historial,
+            )
+
+            session.commit()
+            session.refresh(nueva_orden)
+
+            return nueva_orden
+
+        except Exception:
+            session.rollback()
+            raise

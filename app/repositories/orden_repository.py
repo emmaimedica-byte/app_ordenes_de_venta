@@ -29,6 +29,21 @@ class OrdenRepository:
         return session.exec(
             select(OrdenVenta)
         ).all()
+    
+    
+    def obtener_doc_entries_sap_importados(
+        self,
+        session: Session,
+    ) -> set[int]:
+        """Obtiene los identificadores de SAP que ya están importados."""
+        resultado = session.exec(
+            select(OrdenVenta.sap_doc_entry).where(
+                OrdenVenta.sap_doc_entry.is_not(None)
+            )
+        ).all()
+
+        return {int(doc_entry) for doc_entry in resultado}
+
 
     def guardar(
         self,

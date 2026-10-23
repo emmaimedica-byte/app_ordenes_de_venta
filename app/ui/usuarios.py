@@ -127,6 +127,8 @@ def crear_usuarios(
 
         dialog.open()
 
+    
+
     @ui.refreshable
     def tabla_usuarios():
         with Session(engine) as session:
@@ -199,6 +201,24 @@ def crear_usuarios(
             }
             for dato in datos
         ]
+
+        termino = (busqueda_usuarios.value or "").strip().casefold()
+
+        if termino:
+            filas = [
+                fila
+                for fila in filas
+                if any(
+                    termino in str(fila[campo]).casefold()
+                    for campo in (
+                        "username",
+                        "nombre",
+                        "rol",
+                        "departamento",
+                        "estado",
+                    )
+                )
+            ]
 
         def cambiar_estado(usuario_id: int, activo: bool):
             with ui.dialog() as dialog, ui.card():
@@ -314,6 +334,15 @@ def crear_usuarios(
                 "Nuevo usuario",
                 icon="person_add",
                 on_click=abrir_formulario_creacion,
+            )
+
+            busqueda_usuarios = ui.input(
+                label="Buscar usuario",
+                placeholder="Nombre, usuario, rol o departamento...",
+            ).props("outlined dense clearable").classes("w-full")
+
+            busqueda_usuarios.on_value_change(
+                lambda _: tabla_usuarios.refresh()
             )
 
             tabla_usuarios()

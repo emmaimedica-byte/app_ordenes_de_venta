@@ -1,7 +1,7 @@
 from nicegui import ui
 from nicegui.events import UploadEventArguments
 from sqlmodel import Session
-
+from app.models.usuario import Usuario
 from app.database import engine
 from app.models.orden import EstadoOrden
 
@@ -39,11 +39,18 @@ def crear_handheld(
                 clearable=True,
             ).classes('w-full text-base')
 
+            with Session(engine) as session:
+                usuario_actual = session.get(Usuario, usuario_id)
+                nombre_usuario = (
+                    usuario_actual.nombre
+                    if usuario_actual is not None
+                    else 'Usuario no disponible'
+                )
+
             input_operador_hh = ui.input(
                 label='Operador / Handheld ID',
-                placeholder='Ej. Operador Handheld #1',
-                value='Handheld Almacén',
-            ).classes('w-full').props('outlined dense')
+                value=nombre_usuario,
+            ).classes('w-full').props('outlined dense readonly')
 
             input_comentario_hh = ui.textarea(
                 label='Comentario / Observación (opcional)',

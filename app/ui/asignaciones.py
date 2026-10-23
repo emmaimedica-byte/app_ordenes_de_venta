@@ -267,6 +267,11 @@ def crear_asignaciones(tab_asignaciones, usuario_actual_id):
                 'text-lg font-semibold'
             )
 
+            busqueda_asignaciones = ui.input(
+                label='Buscar asignación',
+                placeholder='Orden, cliente, usuario, tipo o etapa...',
+            ).props('outlined dense clearable').classes('w-full')
+
             tabla_asignaciones = ui.table(
                 columns=[
                     {
@@ -421,8 +426,30 @@ def crear_asignaciones(tab_asignaciones, usuario_actual_id):
                         ),
                     })
 
+            termino = (
+                busqueda_asignaciones.value or ''
+            ).strip().casefold()
+
+            if termino:
+                filas_actualizadas = [
+                    fila
+                    for fila in filas_actualizadas
+                    if any(
+                        termino in str(fila[campo]).casefold()
+                        for campo in (
+                            'orden',
+                            'cliente',
+                            'tipo',
+                            'usuario',
+                            'etapa_asignada',
+                            'etapa_actual',
+                        )
+                    )
+                ]
+
             tabla_asignaciones.rows = filas_actualizadas
             tabla_asignaciones.update()
+            
 
         def actualizar_selector_usuarios():
             with Session(engine) as session:
@@ -471,6 +498,10 @@ def crear_asignaciones(tab_asignaciones, usuario_actual_id):
         # Carga inicial y actualización periódica independiente.
         actualizar_tabla_asignaciones()
         actualizar_selector_usuarios()
+
+        busqueda_asignaciones.on_value_change(
+            lambda _: actualizar_tabla_asignaciones()
+        )
 
         ui.timer(5.0, actualizar_tabla_asignaciones)
         ui.timer(5.0, actualizar_selector_usuarios)

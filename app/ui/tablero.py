@@ -394,12 +394,22 @@ def crear_tablero(
                     )
                     if not orden:
                         return
+                    
+                    usuario_actual = session.get(Usuario, usuario_id)
+                    nombre_usuario = (
+                        usuario_actual.nombre
+                        if usuario_actual is not None
+                        else 'Usuario no disponible'
+                    )
 
                     with ui.dialog() as dialog, ui.card().classes('w-full max-w-md p-6 animacion-entrada'):
                         ui.label(f'💬 Agregar Comentario a {orden.numero_ov}').classes('text-lg font-bold text-blue-900 mb-1')
                         ui.label(f'Etapa Actual: {orden.estado.value}').classes('text-xs text-gray-500 mb-2')
 
-                        input_operador = ui.input('Tu Nombre / Usuario', value='Operador').classes('w-full').props('outlined dense')
+                        input_operador = ui.input(
+                            'Tu Nombre / Usuario',
+                            value=nombre_usuario,
+                        ).classes('w-full').props('outlined dense readonly')
                         input_comentario = ui.textarea('Escribe tu comentario u observación...').classes('w-full mt-2').props('outlined dense')
 
                         imagen_pendiente = {

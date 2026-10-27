@@ -248,7 +248,8 @@ def main_page():
 
 ui.run_with(
     app,
-    storage_secret='secreto_ordenes_venta_2026'
+    storage_secret='secreto_ordenes_venta_2026',
+    title='Órdenes de Venta',
 )
 
 if __name__ in {"__main__", "__mp_main__"}:

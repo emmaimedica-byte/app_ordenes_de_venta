@@ -95,7 +95,37 @@ def crear_asignaciones(tab_asignaciones, usuario_actual_id):
                         orden_repository.obtener_todas(session)
                     )
 
-                ordenes_disponibles['items'] = ordenes_actualizadas
+                    ordenes_filtradas = []
+
+                    for orden in ordenes_actualizadas:
+                        # Las órdenes completadas nunca deben aparecer.
+                        if orden.completadas:
+                            continue
+
+                        # Consultar las asignaciones activas de cada tipo.
+                        tiene_operador = (
+                            asignacion_repository.tiene_asignacion_activa_por_orden_tipo(
+                                session,
+                                orden.id,
+                                TipoAsignacion.OPERADOR,
+                            )
+                        )
+
+                        tiene_chofer = (
+                            asignacion_repository.tiene_asignacion_activa_por_orden_tipo(
+                                session,
+                                orden.id,
+                                TipoAsignacion.CHOFER,
+                            )
+                        )
+
+                        # Ocultar solo si ya tiene ambos asignados.
+                        if tiene_operador and tiene_chofer:
+                            continue
+
+                        ordenes_filtradas.append(orden)
+
+                ordenes_disponibles['items'] = ordenes_filtradas
 
             def filtrar_ordenes():
                 termino = (busqueda_ov.value or '').strip().casefold()

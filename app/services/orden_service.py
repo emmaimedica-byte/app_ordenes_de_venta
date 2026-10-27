@@ -494,6 +494,52 @@ class OrdenService:
 
         return orden
     
+    def completar_orden(
+        self,
+        session: Session,
+        orden_id: int,
+        usuario_id: int,
+    ) -> OrdenVenta:
+        orden = self.repository.obtener_por_id(
+            session,
+            orden_id,
+        )
+
+        if not orden:
+            raise ValueError("La orden no existe")
+
+        if orden.estado != EstadoOrden.ADMINISTRACION_COMPLETADO:
+            raise ValueError(
+                "Solo se pueden completar órdenes en Administración"
+            )
+
+        if orden.completadas:
+            raise ValueError(
+                "La orden ya está completada"
+            )
+
+        usuario = session.get(Usuario, usuario_id)
+
+        if not usuario:
+            raise ValueError("El usuario no existe")
+
+        if usuario.rol.codigo != "ADMINISTRADOR":
+            raise PermissionError(
+                "Solo un administrador puede completar órdenes"
+            )
+
+        orden.completadas = True
+        orden.actualizado_en = datetime.now()
+
+        self.repository.guardar(
+            session,
+            orden,
+        )
+
+        session.commit()
+        session.refresh(orden)
+
+        return orden
 
     
     def importar_orden_sap(

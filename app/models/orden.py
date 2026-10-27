@@ -57,6 +57,7 @@ class OrdenVenta(SQLModel, table=True):
     estado: EstadoOrden = Field(
         default=EstadoOrden.LOGISTICA
     )
+    completadas: bool = Field(default=False, nullable=False)
     operador_actual_id: Optional[int] = Field(
         default=None,
         foreign_key="usuario.id"

@@ -4,12 +4,14 @@ from sqlmodel import Session
 from app.models.usuario import Usuario
 from app.database import engine
 from app.models.orden import EstadoOrden
+from app.models.asignacion import TipoAsignacion
 
 
 def crear_handheld(
     tab_handheld,
     orden_service,
     orden_repository,
+    asignacion_repository,
     notificar_cambio_global,
     estados_config,
     imagen_service,
@@ -41,11 +43,55 @@ def crear_handheld(
 
             with Session(engine) as session:
                 usuario_actual = session.get(Usuario, usuario_id)
+
                 nombre_usuario = (
                     usuario_actual.nombre
                     if usuario_actual is not None
                     else 'Usuario no disponible'
                 )
+
+                usuario_autorizado = (
+                    usuario_actual is not None
+                    and usuario_actual.activo
+                    and usuario_actual.rol is not None
+                    and usuario_actual.rol.activo
+                )
+
+                ordenes_asignadas = []
+
+                if (
+                    usuario_autorizado
+                    and usuario_actual.rol.codigo in ('OPERADOR', 'CHOFER')
+                ):
+                    tipo_asignacion = (
+                        TipoAsignacion.OPERADOR
+                        if usuario_actual.rol.codigo == 'OPERADOR'
+                        else TipoAsignacion.CHOFER
+                    )
+
+                    asignaciones_usuario = (
+                        asignacion_repository.obtener_activas_por_usuario(
+                            session,
+                            usuario_id,
+                            tipo_asignacion,
+                        )
+                    )
+
+                    ordenes_asignadas_ids = {
+                        asignacion.orden_id
+                        for asignacion in asignaciones_usuario
+                    }
+
+                    todas_ordenes = orden_repository.obtener_todas(session)
+
+                    ordenes_asignadas = [
+                        orden
+                        for orden in todas_ordenes
+                        if (
+                            orden.id in ordenes_asignadas_ids
+                            and not orden.completadas
+                        )
+                    ]
 
             input_operador_hh = ui.input(
                 label='Operador / Handheld ID',
@@ -57,12 +103,76 @@ def crear_handheld(
                 placeholder='Ej. Caja dañada, faltan piezas, listo para embarque...',
             ).classes('w-full').props('outlined dense rows=2')
 
-            input_escaneo = ui.input(
-                label='📷 Código de orden de venta',
-                placeholder='Escanea o escribe el número de OV',
-            ).classes('w-full text-xl').props('outlined autofocus')
+            opciones_ordenes = {
+                orden.numero_ov: f'{orden.numero_ov} · {orden.cliente}'
+                for orden in ordenes_asignadas
+            }
+
+            input_escaneo = ui.select(
+                options=opciones_ordenes,
+                label='📋 Orden de venta asignada',
+                value=None,
+                clearable=True,
+            ).classes('w-full text-xl').props('outlined')
+
+            def actualizar_ordenes_asignadas():
+                with Session(engine) as session:
+                    usuario_actual = session.get(Usuario, usuario_id)
+
+                    if (
+                        usuario_actual is None
+                        or not usuario_actual.activo
+                        or usuario_actual.rol is None
+                        or not usuario_actual.rol.activo
+                        or usuario_actual.rol.codigo not in ('OPERADOR', 'CHOFER')
+                    ):
+                        input_escaneo.options = {}
+                        input_escaneo.value = None
+                        input_escaneo.update()
+                        return
+
+                    tipo_asignacion_actual = (
+                        TipoAsignacion.OPERADOR
+                        if usuario_actual.rol.codigo == 'OPERADOR'
+                        else TipoAsignacion.CHOFER
+                    )
+
+                    asignaciones_actuales = (
+                        asignacion_repository.obtener_activas_por_usuario(
+                            session,
+                            usuario_id,
+                            tipo_asignacion_actual,
+                        )
+                    )
+
+                    ids_asignados = {
+                        asignacion.orden_id
+                        for asignacion in asignaciones_actuales
+                    }
+
+                    todas_ordenes_actuales = orden_repository.obtener_todas(session)
+
+                    opciones_actualizadas = {
+                        orden.numero_ov: f'{orden.numero_ov} · {orden.cliente}'
+                        for orden in todas_ordenes_actuales
+                        if orden.id in ids_asignados and not orden.completadas
+                    }
+
+                seleccion_actual = input_escaneo.value
+
+                input_escaneo.options = opciones_actualizadas
+
+                if seleccion_actual not in opciones_actualizadas:
+                    input_escaneo.value = None
+
+                input_escaneo.update()
 
             resultado_card = ui.column().classes('w-full')
+
+            ui.timer(
+                3.0,
+                actualizar_ordenes_asignadas,
+            )
 
             # La imagen permanece en memoria hasta procesar la OV.
             imagen_pendiente = {
@@ -116,7 +226,7 @@ def crear_handheld(
             def limpiar_formulario():
                 select_etapa.value = None
                 input_comentario_hh.value = ''
-                input_escaneo.value = ''
+                input_escaneo.value = None
                 imagen_pendiente['contenido'] = None
                 imagen_pendiente['nombre'] = None
 
@@ -124,14 +234,16 @@ def crear_handheld(
                 input_escaneo.run_method('focus')
 
             def procesar_escaneo():
-                codigo = (input_escaneo.value or '').strip()
+                codigo = input_escaneo.value
 
                 if not codigo:
                     ui.notify(
-                        'Escanea o introduce una OV antes de procesar.',
+                        'Selecciona una OV asignada antes de procesar.',
                         type='warning',
                     )
                     return
+
+                codigo = str(codigo).strip()
 
                 accion_seleccionada = select_etapa.value
                 nombre_op = (

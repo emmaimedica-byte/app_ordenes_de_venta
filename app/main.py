@@ -10,6 +10,7 @@ from app.models.orden import OrdenVenta, EstadoOrden, HistorialOrden
 
 
 from app.repositories.orden_repository import OrdenRepository
+from app.repositories.asignacion_repository import AsignacionRepository
 from app.services.orden_service import OrdenService
 from app.services.sap_service import SAPService
 from app.services.dashboard_service import DashboardService
@@ -25,6 +26,7 @@ from app.ui.handheld import crear_handheld
 from app.ui.dashboard import crear_dashboard
 from app.ui.asignaciones import crear_asignaciones
 from app.ui.usuarios import crear_usuarios
+from app.ui.completadas import crear_completadas
 
 # ----------------------------------------------------
 #  CONTROL DE ESTADO GLOBAL PARA TIEMPO REAL
@@ -55,6 +57,7 @@ app.mount(
 )
 
 orden_repository = OrdenRepository()
+asignacion_repository = AsignacionRepository()
 orden_service = OrdenService(orden_repository)
 sap_service = SAPService(orden_repository)
 dashboard_service = DashboardService()
@@ -178,13 +181,13 @@ def main_page():
     version_cliente_tablero = {'ultima_vista': None}
     version_cliente_metrics = {'ultima_vista': None}
 
-    tab_panels, tab_kanban, tab_handheld, tab_metrics, tab_asignaciones, tab_usuarios = crear_layout(
+    tab_panels, tab_kanban, tab_handheld, tab_metrics, tab_asignaciones, tab_usuarios, tab_completadas = crear_layout(
         usuario_nombre=usuario_nombre,
         cerrar_sesion=cerrar_sesion,
         usuario_rol=usuario.rol.codigo,
     )
 
-    
+
     with tab_panels:
         crear_tablero(
             tab_kanban=tab_kanban,
@@ -204,6 +207,7 @@ def main_page():
             tab_handheld=tab_handheld,
             orden_service=orden_service,
             orden_repository=orden_repository,
+            asignacion_repository=asignacion_repository,
             notificar_cambio_global=notificar_cambio_global,
             estados_config=ESTADOS_CONFIG,
             imagen_service=imagen_service,
@@ -229,6 +233,14 @@ def main_page():
             crear_usuarios(
                 tab_usuarios=tab_usuarios,
                 usuario_actual_id=usuario.id,
+            )
+
+        if tab_completadas is not None:
+            crear_completadas(
+                tab_completadas=tab_completadas,
+                orden_service=orden_service,
+                orden_repository=orden_repository,
+                usuario_id=usuario.id,
             )
 
 

@@ -76,6 +76,31 @@ def crear_tablero(
                         ui.notify(str(error), type='warning')
 
 
+            def completar_orden(orden_id: int):
+                with Session(engine) as session:
+                    try:
+                        orden = orden_service.completar_orden(
+                            session=session,
+                            orden_id=orden_id,
+                            usuario_id=usuario_id,
+                        )
+
+                        ui.notify(
+                            f'OV {orden.numero_ov} marcada como completada',
+                            type='positive',
+                        )
+
+                        notificar_cambio_global(orden.id)
+                        refrescar_tablero()
+
+                    except PermissionError as error:
+                        ui.notify(str(error), type='negative')
+
+                    except ValueError as error:
+                        ui.notify(str(error), type='warning')
+
+
+
             def crear_nueva_ov():
                 num_ov = input_ov.value or ''
                 cliente_nombre = input_cliente.value or ''
@@ -142,8 +167,8 @@ def crear_tablero(
 
                 notificar_cambio_global(id_creada)
                 refrescar_tablero()
-            
-            
+
+
             def importar_orden_sap(orden_sap: dict, dialog):
                 try:
                     with Session(engine) as session:
@@ -202,7 +227,7 @@ def crear_tablero(
                         )
                         return
 
-                
+
                 try:
                     with Session(engine) as session:
                         ordenes_sap = sap_service.obtener_ordenes_abiertas(
@@ -394,7 +419,7 @@ def crear_tablero(
                     )
                     if not orden:
                         return
-                    
+
                     usuario_actual = session.get(Usuario, usuario_id)
                     nombre_usuario = (
                         usuario_actual.nombre
@@ -470,7 +495,7 @@ def crear_tablero(
                                     type='warning',
                                 )
                                 return
-                            
+
                             imagen_guardada = True
 
                             with Session(engine) as s:
@@ -511,7 +536,7 @@ def crear_tablero(
                                         type='negative'
                                     )
                                     return
-                                
+
                                 if imagen_pendiente['contenido']:
                                     try:
                                         imagen_service.guardar_imagen(
@@ -528,7 +553,7 @@ def crear_tablero(
                                             f'El comentario se guardó, pero la imagen no: {error}',
                                             type='negative',
                                         )
-  
+
                             if imagen_guardada:
                                 if coment and imagen_pendiente['contenido']:
                                     mensaje = '💬 Comentario e imagen guardados'
@@ -678,7 +703,7 @@ def crear_tablero(
                         )
 
                     dialog.open()
-            
+
             def ver_imagenes_modal(orden_id: int):
                 try:
                     with Session(engine) as session:
@@ -809,7 +834,7 @@ def crear_tablero(
                         type='negative',
                     )
                     raise
-                
+
 
 
             # Panel Superior
@@ -869,6 +894,12 @@ def crear_tablero(
                     todas_ordenes = orden_repository.obtener_todas(
                         session
                     )
+
+                    todas_ordenes = [
+                        orden
+                        for orden in todas_ordenes
+                        if not orden.completadas
+                    ]
 
                     usuario = session.get(Usuario, usuario_id)
 
@@ -940,7 +971,7 @@ def crear_tablero(
                         )
                     )
 
-                    
+
 
                     estados_orden = [
                         configuracion[0]
@@ -1068,6 +1099,22 @@ def crear_tablero(
                                                     )
                                                 ).props('flat round dense color=primary')
 
+
+                                            if (
+                                                orden.estado
+                                                == EstadoOrden.ADMINISTRACION_COMPLETADO
+                                                and usuario_autorizado
+                                                and usuario.rol.codigo == 'ADMINISTRADOR'
+                                            ):
+                                                ui.button(
+                                                    'Completar',
+                                                    icon='check_circle',
+                                                    on_click=lambda o_id=orden.id: completar_orden(o_id),
+                                                ).props(
+                                                    'dense color=positive'
+                                                ).tooltip(
+                                                    'Marcar OV como completada'
+                                                )
 
             contenedor_tablero = ui.column().classes('w-full')
             refrescar_tablero()

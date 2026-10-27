@@ -44,7 +44,7 @@ def crear_layout(
                 'text-xs opacity-80 bg-blue-900 px-3 py-1 rounded-full hidden md:block'
             )
 
-    
+
     # Identificadores estables para recordar la pestaña activa
     pestana_guardada = app.storage.user.get(
         'pestana_activa',
@@ -54,7 +54,7 @@ def crear_layout(
     nombres_validos = {'tablero', 'handheld', 'dashboard'}
 
     if usuario_rol == 'ADMINISTRADOR':
-        nombres_validos.update({'asignaciones', 'usuarios'})
+        nombres_validos.update({'asignaciones', 'usuarios', 'completadas'})
 
     if pestana_guardada not in nombres_validos:
         pestana_guardada = 'tablero'
@@ -87,6 +87,7 @@ def crear_layout(
 
         tab_asignaciones = None
         tab_usuarios = None
+        tab_completadas = None
 
         if usuario_rol == 'ADMINISTRADOR':
             tab_asignaciones = ui.tab(
@@ -99,6 +100,12 @@ def crear_layout(
                 label='Administración de Usuarios',
                 icon='manage_accounts',
             )
+            tab_completadas = ui.tab(
+                'completadas',
+                label='Órdenes completadas',
+                icon='task_alt',
+            )
+
 
     pestanas = {
         'tablero': tab_kanban,
@@ -112,6 +119,9 @@ def crear_layout(
     if tab_usuarios is not None:
         pestanas['usuarios'] = tab_usuarios
 
+    if tab_completadas is not None:
+        pestanas['completadas'] = tab_completadas
+
     tab_panels = ui.tab_panels(
         tabs,
         value=pestanas[pestana_guardada],
@@ -124,5 +134,5 @@ def crear_layout(
         tab_metrics,
         tab_asignaciones,
         tab_usuarios,
+        tab_completadas,
     )
-

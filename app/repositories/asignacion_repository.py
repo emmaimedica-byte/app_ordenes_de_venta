@@ -24,7 +24,7 @@ class AsignacionRepository:
         ).first()
 
         return resultado is not None
-    
+
     def tiene_asignacion_activa_por_orden_tipo(
         self,
         session: Session,
@@ -95,3 +95,17 @@ class AsignacionRepository:
         session.refresh(asignacion)
 
         return asignacion
+
+
+    def obtener_todas_por_orden(
+        self,
+        session: Session,
+        orden_id: int,
+    ) -> list[AsignacionOrden]:
+        return session.exec(
+            select(AsignacionOrden)
+            .where(
+                AsignacionOrden.orden_id == orden_id,
+            )
+            .order_by(AsignacionOrden.asignado_en.asc())
+        ).all()
